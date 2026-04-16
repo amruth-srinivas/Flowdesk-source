@@ -29,13 +29,18 @@ import { MultiSelect } from 'primereact/multiselect';
 import { Steps } from 'primereact/steps';
 import { Tag } from 'primereact/tag';
 import {
+  createCustomerRequest,
   createProjectRequest,
   createUserRequest,
+  getCustomersRequest,
   getProjectsRequest,
   getUsersRequest,
   loginRequest,
+  type CustomerContact,
+  type CustomerRecord,
   type ProjectRecord,
   type ProjectStatus,
+  updateCustomerRequest,
   updateProjectRequest,
   updateUserPasswordRequest,
   updateUserRequest,
@@ -46,6 +51,7 @@ type Role = 'admin' | 'teamLead' | 'teamMember';
 type TopPage = 'projects' | 'knowledgeBase' | 'calendar' | 'tickets' | 'kb';
 type UserDialogMode = 'create' | 'edit';
 type ProjectFormStep = 0 | 1;
+type ProjectViewMode = 'table' | 'kanban';
 
 type NavItem = {
   id: TopPage;
@@ -150,6 +156,26 @@ const initialProjectForm = {
   memberIds: [] as string[],
 };
 
+const emptyCustomerContact: CustomerContact = {
+  name: '',
+  role: '',
+  email: '',
+  phone: '',
+};
+
+const initialCustomerForm = {
+  id: '',
+  name: '',
+  email: '',
+  company: '',
+  phone: '',
+  timezone: '',
+  tags: [] as string[],
+  notes: '',
+  contacts: [{ ...emptyCustomerContact }],
+  projectIds: [] as string[],
+};
+
 function App() {
   const [employeeId, setEmployeeId] = useState('');
   const [password, setPassword] = useState('');
@@ -171,12 +197,24 @@ function App() {
   const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [customers, setCustomers] = useState<CustomerRecord[]>([]);
+  const [isCustomersLoading, setIsCustomersLoading] = useState(false);
+  const [customerError, setCustomerError] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [isCustomerDialogOpen, setIsCustomerDialogOpen] = useState(false);
+  const [isCustomerDetailOpen, setIsCustomerDetailOpen] = useState(false);
+  const [isCustomerDetailEditing, setIsCustomerDetailEditing] = useState(false);
+  const [isSavingCustomer, setIsSavingCustomer] = useState(false);
+  const [customerFormError, setCustomerFormError] = useState('');
+  const [customerForm, setCustomerForm] = useState(initialCustomerForm);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [isProjectsLoading, setIsProjectsLoading] = useState(false);
   const [projectError, setProjectError] = useState('');
   const [projectSearch, setProjectSearch] = useState('');
+  const [projectViewMode, setProjectViewMode] = useState<ProjectViewMode>('table');
   const [isProjectDialogOpen, setIsProjectDialogOpen] = useState(false);
   const [isProjectDetailOpen, setIsProjectDetailOpen] = useState(false);
+  const [isProjectDetailEditing, setIsProjectDetailEditing] = useState(false);
   const [projectStep, setProjectStep] = useState<ProjectFormStep>(0);
   const [isSavingProject, setIsSavingProject] = useState(false);
   const [isSavingProjectDetail, setIsSavingProjectDetail] = useState(false);
@@ -184,6 +222,7 @@ function App() {
   const [projectForm, setProjectForm] = useState(initialProjectForm);
   const [projectDetailError, setProjectDetailError] = useState('');
   const [selectedProject, setSelectedProject] = useState<ProjectRecord | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord | null>(null);
   const [userFormError, setUserFormError] = useState('');
   const [passwordFormError, setPasswordFormError] = useState('');
   const [createForm, setCreateForm] = useState(initialCreateForm);
@@ -198,6 +237,7 @@ function App() {
   const currentModule = activeModule || selectedPage.modules[0];
   const isUserManagementView = role === 'admin' && selectedPage.id === 'projects' && currentModule === 'User Management';
   const isProjectView = role === 'admin' && selectedPage.id === 'projects' && currentModule === 'View';
+  const isCustomerView = role === 'admin' && selectedPage.id === 'knowledgeBase' && currentModule === 'Customers';
 
   const filteredUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
@@ -211,6 +251,20 @@ function App() {
       ),
     );
   }, [userSearch, users]);
+
+  const filteredCustomers = useMemo(() => {
+    const query = customerSearch.trim().toLowerCase();
+    if (!query) {
+      return customers;
+    }
+
+    return customers.filter((customer) =>
+      [customer.name, customer.email, customer.company ?? '', customer.tags.join(' ')]
+        .join(' ')
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [customerSearch, customers]);
 
   const activeAssignableUsers = useMemo(() => users.filter((user) => user.is_active), [users]);
 
@@ -274,6 +328,15 @@ function App() {
     });
   }, [projectSearch, projects, userLookup]);
 
+  const projectsByStatus = useMemo(
+    () =>
+      projectStatusOptions.map((statusOption) => ({
+        ...statusOption,
+        projects: filteredProjects.filter((project) => project.status === statusOption.value),
+      })),
+    [filteredProjects],
+  );
+
   useEffect(() => {
     if (!isAuthenticated || role !== 'admin') {
       return;
@@ -281,6 +344,7 @@ function App() {
 
     void loadUsers();
     void loadProjects();
+    void loadCustomers();
   }, [isAuthenticated, role]);
 
   async function loadUsers() {
@@ -315,6 +379,21 @@ function App() {
       setProjectError(error instanceof Error ? error.message : 'Unable to load projects');
     } finally {
       setIsProjectsLoading(false);
+    }
+  }
+
+  async function loadCustomers() {
+    setIsCustomersLoading(true);
+    setCustomerError('');
+    try {
+      const data = await getCustomersRequest();
+      setCustomers(
+        [...data].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime()),
+      );
+    } catch (error) {
+      setCustomerError(error instanceof Error ? error.message : 'Unable to load customers');
+    } finally {
+      setIsCustomersLoading(false);
     }
   }
 
@@ -402,10 +481,101 @@ function App() {
     setIsProjectDialogOpen(true);
   }
 
+  function openCreateCustomerDialog() {
+    setCustomerForm(initialCustomerForm);
+    setCustomerFormError('');
+    setIsCustomerDialogOpen(true);
+  }
+
+  function openCustomerDetailDialog(customer: CustomerRecord) {
+    setSelectedCustomer(customer);
+    setCustomerFormError('');
+    setIsCustomerDetailEditing(false);
+    setIsCustomerDetailOpen(true);
+  }
+
+  function cancelCustomerDetailEditing() {
+    if (selectedCustomer) {
+      const latestCustomer = customers.find((customer) => customer.id === selectedCustomer.id);
+      if (latestCustomer) {
+        setSelectedCustomer(latestCustomer);
+      }
+    }
+    setCustomerFormError('');
+    setIsCustomerDetailEditing(false);
+  }
+
+  function updateCustomerContactRow(
+    index: number,
+    field: keyof CustomerContact,
+    value: string,
+    mode: 'create' | 'detail',
+  ) {
+    if (mode === 'create') {
+      setCustomerForm((current) => ({
+        ...current,
+        contacts: current.contacts.map((contact, contactIndex) =>
+          contactIndex === index ? { ...contact, [field]: value } : contact,
+        ),
+      }));
+      return;
+    }
+
+    setSelectedCustomer((current) =>
+      current
+        ? {
+            ...current,
+            contacts: current.contacts.map((contact, contactIndex) =>
+              contactIndex === index ? { ...contact, [field]: value } : contact,
+            ),
+          }
+        : current,
+    );
+  }
+
+  function addCustomerContactRow(mode: 'create' | 'detail') {
+    if (mode === 'create') {
+      setCustomerForm((current) => ({ ...current, contacts: [...current.contacts, { ...emptyCustomerContact }] }));
+      return;
+    }
+
+    setSelectedCustomer((current) =>
+      current ? { ...current, contacts: [...current.contacts, { ...emptyCustomerContact }] } : current,
+    );
+  }
+
+  function removeCustomerContactRow(index: number, mode: 'create' | 'detail') {
+    if (mode === 'create') {
+      setCustomerForm((current) => ({
+        ...current,
+        contacts: current.contacts.length > 1 ? current.contacts.filter((_, contactIndex) => contactIndex !== index) : current.contacts,
+      }));
+      return;
+    }
+
+    setSelectedCustomer((current) =>
+      current && current.contacts.length > 1
+        ? { ...current, contacts: current.contacts.filter((_, contactIndex) => contactIndex !== index) }
+        : current,
+    );
+  }
+
   function openProjectDetailDialog(project: ProjectRecord) {
     setSelectedProject(project);
     setProjectDetailError('');
+    setIsProjectDetailEditing(false);
     setIsProjectDetailOpen(true);
+  }
+
+  function cancelProjectDetailEditing() {
+    if (selectedProject) {
+      const latestProject = projects.find((project) => project.id === selectedProject.id);
+      if (latestProject) {
+        setSelectedProject(latestProject);
+      }
+    }
+    setProjectDetailError('');
+    setIsProjectDetailEditing(false);
   }
 
   function goToProjectStep(nextStep: ProjectFormStep) {
@@ -453,6 +623,77 @@ function App() {
     }
   }
 
+  async function handleCreateCustomer() {
+    if (!customerForm.name.trim() || !customerForm.email.trim()) {
+      setCustomerFormError('Customer name and primary email are required.');
+      return;
+    }
+
+    setIsSavingCustomer(true);
+    setCustomerFormError('');
+    try {
+      const createdCustomer = await createCustomerRequest({
+        name: customerForm.name.trim(),
+        email: customerForm.email.trim(),
+        company: customerForm.company.trim() || undefined,
+        phone: customerForm.phone.trim() || undefined,
+        timezone: customerForm.timezone.trim() || undefined,
+        tags: customerForm.tags.filter(Boolean),
+        notes: customerForm.notes.trim() || undefined,
+        contacts: customerForm.contacts.filter((contact) => contact.name.trim()).map((contact) => ({
+          name: contact.name.trim(),
+          role: contact.role?.trim() || undefined,
+          email: contact.email?.trim() || undefined,
+          phone: contact.phone?.trim() || undefined,
+        })),
+        project_ids: customerForm.projectIds,
+      });
+      setCustomers((current) => [createdCustomer, ...current]);
+      setIsCustomerDialogOpen(false);
+      setCustomerForm(initialCustomerForm);
+    } catch (error) {
+      setCustomerFormError(error instanceof Error ? error.message : 'Unable to create customer');
+    } finally {
+      setIsSavingCustomer(false);
+    }
+  }
+
+  async function handleUpdateCustomer() {
+    if (!selectedCustomer || !selectedCustomer.name.trim() || !selectedCustomer.email.trim()) {
+      setCustomerFormError('Customer name and primary email are required.');
+      return;
+    }
+
+    setIsSavingCustomer(true);
+    setCustomerFormError('');
+    try {
+      const updatedCustomer = await updateCustomerRequest(selectedCustomer.id, {
+        name: selectedCustomer.name.trim(),
+        email: selectedCustomer.email.trim(),
+        company: selectedCustomer.company?.trim() || undefined,
+        phone: selectedCustomer.phone?.trim() || undefined,
+        timezone: selectedCustomer.timezone?.trim() || undefined,
+        tags: selectedCustomer.tags.filter(Boolean),
+        notes: selectedCustomer.notes?.trim() || undefined,
+        contacts: selectedCustomer.contacts.filter((contact) => contact.name.trim()).map((contact) => ({
+          name: contact.name.trim(),
+          role: contact.role?.trim() || undefined,
+          email: contact.email?.trim() || undefined,
+          phone: contact.phone?.trim() || undefined,
+        })),
+        project_ids: selectedCustomer.project_ids,
+      });
+      setCustomers((current) => current.map((customer) => (customer.id === updatedCustomer.id ? updatedCustomer : customer)));
+      setSelectedCustomer(updatedCustomer);
+      setIsCustomerDetailEditing(false);
+      setIsCustomerDetailOpen(false);
+    } catch (error) {
+      setCustomerFormError(error instanceof Error ? error.message : 'Unable to update customer');
+    } finally {
+      setIsSavingCustomer(false);
+    }
+  }
+
   async function handleUpdateProject() {
     if (!selectedProject || !selectedProject.name.trim()) {
       setProjectDetailError('Project name is required.');
@@ -472,6 +713,7 @@ function App() {
       });
       setProjects((current) => current.map((project) => (project.id === updatedProject.id ? updatedProject : project)));
       setSelectedProject(updatedProject);
+      setIsProjectDetailEditing(false);
       setIsProjectDetailOpen(false);
     } catch (error) {
       setProjectDetailError(error instanceof Error ? error.message : 'Unable to update project');
@@ -590,28 +832,19 @@ function App() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}
       >
-        <div className="user-management-hero">
-          <div>
-            <h3>{selectedPage.label}</h3>
-            {/* <h1>User Management</h1> */}
-            {/* <p>Manage workspace users, onboard new members, update their profile details, and reset access when needed.</p> */}
-          </div>
-          <Button label="Add User" icon="pi pi-user-plus" onClick={openCreateUserDialog} />
-        </div>
-
         <div className="user-table-shell">
           <div className="user-table-toolbar">
-            <div>
-              <h2>Directory</h2>
-              <p>Search by name, employee ID, email, or role.</p>
-            </div>
-            <div className="table-search">
-              <Search size={16} />
-              <input
-                placeholder="Search users..."
-                value={userSearch}
-                onChange={(event) => setUserSearch(event.target.value)}
-              />
+            <div />
+            <div className="project-page-actions">
+              <div className="table-search">
+                <Search size={16} />
+                <input
+                  placeholder="Search users..."
+                  value={userSearch}
+                  onChange={(event) => setUserSearch(event.target.value)}
+                />
+              </div>
+              <Button label="Add User" icon="pi pi-user-plus" onClick={openCreateUserDialog} />
             </div>
           </div>
 
@@ -884,92 +1117,147 @@ function App() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}
       >
-        <div className="user-management-hero">
-          <div>
-            <h3>{selectedPage.label}</h3>
-            {/* <h1>Projects</h1> */}
-            {/* <p>Create projects in two guided steps, define core details, and assign the right lead and members before launch.</p> */}
-          </div>
-          <Button label="Add Project" icon="pi pi-plus" onClick={openCreateProjectDialog} />
-        </div>
-
-        <div className="user-table-shell project-shell">
-          <div className="user-table-toolbar">
-            <div>
-              <h2>Project Directory</h2>
-              <p>Track project status, assigned lead, tags, and recent creations.</p>
-            </div>
-            <div className="table-search">
-              <Search size={16} />
-              <input
-                placeholder="Search projects..."
-                value={projectSearch}
-                onChange={(event) => setProjectSearch(event.target.value)}
-              />
+        <section className="project-workspace">
+          <div className="project-toolbar-card">
+            <div />
+            <div className="project-page-actions">
+              <div className="project-view-toggle" role="tablist" aria-label="Project view selector">
+                <button
+                  type="button"
+                  className={projectViewMode === 'table' ? 'active' : ''}
+                  onClick={() => setProjectViewMode('table')}
+                >
+                  Table
+                </button>
+                <button
+                  type="button"
+                  className={projectViewMode === 'kanban' ? 'active' : ''}
+                  onClick={() => setProjectViewMode('kanban')}
+                >
+                  Kanban
+                </button>
+              </div>
+              <div className="table-search">
+                <Search size={16} />
+                <input
+                  placeholder="Search projects..."
+                  value={projectSearch}
+                  onChange={(event) => setProjectSearch(event.target.value)}
+                />
+              </div>
+              <Button label="Add Project" icon="pi pi-plus" onClick={openCreateProjectDialog} />
             </div>
           </div>
 
           {projectError ? <small className="error-text">{projectError}</small> : null}
 
-          <DataTable
-            value={filteredProjects}
-            loading={isProjectsLoading}
-            paginator
-            rows={6}
-            rowsPerPageOptions={[6, 10, 20]}
-            className="user-table"
-            emptyMessage="No projects found."
-            onRowClick={(event) => openProjectDetailDialog(event.data as ProjectRecord)}
-            rowClassName={() => 'clickable-row'}
-          >
-            <Column
-              field="name"
-              header="Project"
-              body={(project: ProjectRecord) => (
-                <div className="user-name-cell">
-                  <strong>{project.name}</strong>
-                  <span>{project.description || 'No description added yet.'}</span>
-                </div>
-              )}
-            />
-            <Column
-              field="status"
-              header="Status"
-              body={(project: ProjectRecord) => (
-                <Tag value={project.status.replace('-', ' ')} severity={projectStatusSeverities[project.status]} rounded />
-              )}
-            />
-            <Column
-              field="lead_id"
-              header="Team Lead"
-              body={(project: ProjectRecord) => (
-                <span className="muted-cell">
-                  {project.lead_id ? userLookup.get(project.lead_id)?.name ?? 'Assigned user' : 'Not assigned'}
-                </span>
-              )}
-            />
-            <Column
-              field="tech_tags"
-              header="Tech Tags"
-              body={(project: ProjectRecord) => (
-                <div className="project-tag-list">
-                  {project.tech_tags.length ? (
-                    project.tech_tags.slice(0, 3).map((tag) => <Tag key={tag} value={tag} severity="info" rounded />)
-                  ) : (
-                    <span className="muted-cell">None</span>
+          {projectViewMode === 'table' ? (
+            <div className="user-table-shell project-shell">
+              <DataTable
+                value={filteredProjects}
+                loading={isProjectsLoading}
+                paginator
+                rows={6}
+                rowsPerPageOptions={[6, 10, 20]}
+                className="user-table"
+                emptyMessage="No projects found."
+                onRowClick={(event) => openProjectDetailDialog(event.data as ProjectRecord)}
+                rowClassName={() => 'clickable-row'}
+              >
+                <Column
+                  field="name"
+                  header="Project"
+                  body={(project: ProjectRecord) => (
+                    <div className="user-name-cell">
+                      <strong>{project.name}</strong>
+                      <span>{project.description || 'No description added yet.'}</span>
+                    </div>
                   )}
-                </div>
-              )}
-            />
-            <Column
-              field="created_at"
-              header="Created"
-              body={(project: ProjectRecord) => (
-                <span className="muted-cell">{new Date(project.created_at).toLocaleDateString()}</span>
-              )}
-            />
-          </DataTable>
-        </div>
+                />
+                <Column
+                  field="status"
+                  header="Status"
+                  body={(project: ProjectRecord) => (
+                    <Tag value={project.status.replace('-', ' ')} severity={projectStatusSeverities[project.status]} rounded />
+                  )}
+                />
+                <Column
+                  field="lead_id"
+                  header="Team Lead"
+                  body={(project: ProjectRecord) => (
+                    <span className="muted-cell">
+                      {project.lead_id ? userLookup.get(project.lead_id)?.name ?? 'Assigned user' : 'Not assigned'}
+                    </span>
+                  )}
+                />
+                <Column
+                  field="tech_tags"
+                  header="Tech Tags"
+                  body={(project: ProjectRecord) => (
+                    <div className="project-tag-list">
+                      {project.tech_tags.length ? (
+                        project.tech_tags.slice(0, 3).map((tag) => <Tag key={tag} value={tag} severity="info" rounded />)
+                      ) : (
+                        <span className="muted-cell">None</span>
+                      )}
+                    </div>
+                  )}
+                />
+                <Column
+                  field="created_at"
+                  header="Created"
+                  body={(project: ProjectRecord) => (
+                    <span className="muted-cell">{new Date(project.created_at).toLocaleDateString()}</span>
+                  )}
+                />
+              </DataTable>
+            </div>
+          ) : (
+            <div className="kanban-board">
+              {projectsByStatus.map((statusGroup) => (
+                <section key={statusGroup.value} className="kanban-column">
+                  <div className="kanban-column-header">
+                    <div>
+                      <h4>{statusGroup.label}</h4>
+                      <small>{statusGroup.projects.length} projects</small>
+                    </div>
+                    <Tag value={statusGroup.label} severity={projectStatusSeverities[statusGroup.value]} rounded />
+                  </div>
+                  <div className="kanban-column-body">
+                    {statusGroup.projects.length ? (
+                      statusGroup.projects.map((project) => (
+                        <button
+                          key={project.id}
+                          type="button"
+                          className="kanban-card"
+                          onClick={() => openProjectDetailDialog(project)}
+                        >
+                          <div className="kanban-card-top">
+                            <strong>{project.name}</strong>
+                            <span>{new Date(project.created_at).toLocaleDateString()}</span>
+                          </div>
+                          <p>{project.description || 'No description added yet.'}</p>
+                          <div className="kanban-meta">
+                            <small>Lead: {project.lead_id ? userLookup.get(project.lead_id)?.name ?? 'Assigned user' : 'Not assigned'}</small>
+                          </div>
+                          <div className="project-tag-list">
+                            {project.tech_tags.length ? (
+                              project.tech_tags.slice(0, 3).map((tag) => <Tag key={tag} value={tag} severity="info" rounded />)
+                            ) : (
+                              <span className="muted-cell">No tags</span>
+                            )}
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="kanban-empty">No projects in this lane.</div>
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </section>
 
         <Dialog
           header="Create Project"
@@ -1148,7 +1436,10 @@ function App() {
         <Dialog
           header={selectedProject ? `Project Details: ${selectedProject.name}` : 'Project Details'}
           visible={isProjectDetailOpen}
-          onHide={() => setIsProjectDetailOpen(false)}
+          onHide={() => {
+            setIsProjectDetailEditing(false);
+            setIsProjectDetailOpen(false);
+          }}
           className="project-detail-dialog"
           position="right"
           modal
@@ -1156,8 +1447,8 @@ function App() {
           resizable={false}
         >
           {selectedProject ? (
-            <div className="user-form">
-              <div className="form-grid">
+            <div className="user-form project-detail-form">
+              <div className="form-grid project-detail-grid">
                 <div className="p-inputgroup">
                   <span className="p-inputgroup-addon">
                     <Boxes size={16} />
@@ -1166,6 +1457,7 @@ function App() {
                     <InputText
                       id="detail-project-name"
                       value={selectedProject.name}
+                      disabled={!isProjectDetailEditing}
                       onChange={(event) =>
                         setSelectedProject((current) => (current ? { ...current, name: event.target.value } : current))
                       }
@@ -1183,6 +1475,7 @@ function App() {
                       id="detail-project-status"
                       value={selectedProject.status}
                       options={projectStatusOptions}
+                      disabled={!isProjectDetailEditing}
                       onChange={(event) =>
                         setSelectedProject((current) =>
                           current ? { ...current, status: event.value as ProjectStatus } : current,
@@ -1194,7 +1487,7 @@ function App() {
                   </FloatLabel>
                 </div>
 
-                <div className="p-inputgroup project-textarea-row">
+                <div className="p-inputgroup project-textarea-row project-detail-span-2">
                   <span className="p-inputgroup-addon">
                     <i className="pi pi-align-left" />
                   </span>
@@ -1202,6 +1495,7 @@ function App() {
                     <InputTextarea
                       id="detail-project-description"
                       value={selectedProject.description ?? ''}
+                      disabled={!isProjectDetailEditing}
                       onChange={(event) =>
                         setSelectedProject((current) =>
                           current ? { ...current, description: event.target.value } : current,
@@ -1214,7 +1508,7 @@ function App() {
                   </FloatLabel>
                 </div>
 
-                <div className="p-inputgroup">
+                <div className="p-inputgroup project-detail-span-2">
                   <span className="p-inputgroup-addon">
                     <i className="pi pi-hashtag" />
                   </span>
@@ -1222,6 +1516,7 @@ function App() {
                     <MultiSelect
                       id="detail-project-tags"
                       value={selectedProject.tech_tags}
+                      disabled={!isProjectDetailEditing}
                       options={[
                         'React',
                         'TypeScript',
@@ -1254,6 +1549,7 @@ function App() {
                       id="detail-project-lead"
                       value={selectedProject.lead_id ?? ''}
                       options={[{ label: 'Assign later', value: '' }, ...leadOptions]}
+                      disabled={!isProjectDetailEditing}
                       onChange={(event) =>
                         setSelectedProject((current) =>
                           current
@@ -1280,6 +1576,7 @@ function App() {
                       id="detail-project-members"
                       value={selectedProject.member_ids}
                       options={projectDetailMemberOptions}
+                      disabled={!isProjectDetailEditing}
                       onChange={(event) =>
                         setSelectedProject((current) =>
                           current ? { ...current, member_ids: event.value as string[] } : current,
@@ -1295,14 +1592,449 @@ function App() {
 
               {projectDetailError ? <small className="error-text">{projectDetailError}</small> : null}
 
-              <div className="dialog-actions">
-                <Button type="button" label="Close" text onClick={() => setIsProjectDetailOpen(false)} />
+              <div className="dialog-actions project-detail-actions">
+                {!isProjectDetailEditing ? (
+                  <Button
+                    type="button"
+                    icon="pi pi-pencil"
+                    label="Edit"
+                    text
+                    onClick={() => setIsProjectDetailEditing(true)}
+                  />
+                ) : (
+                  <Button
+                    type="button"
+                    icon="pi pi-times"
+                    label="Cancel Edit"
+                    text
+                    onClick={cancelProjectDetailEditing}
+                  />
+                )}
                 <Button
                   type="button"
-                  label={isSavingProjectDetail ? 'Saving...' : 'Save Project'}
-                  loading={isSavingProjectDetail}
-                  onClick={() => void handleUpdateProject()}
+                  label="Close"
+                  text
+                  onClick={() => {
+                    cancelProjectDetailEditing();
+                    setIsProjectDetailOpen(false);
+                  }}
                 />
+                {isProjectDetailEditing ? (
+                  <Button
+                    type="button"
+                    label={isSavingProjectDetail ? 'Saving...' : 'Save Project'}
+                    loading={isSavingProjectDetail}
+                    onClick={() => void handleUpdateProject()}
+                  />
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </Dialog>
+      </motion.article>
+    );
+  }
+
+  function renderCustomerManagement() {
+    return (
+      <motion.article
+        key={`${selectedPage.id}-${currentModule}`}
+        className="page-card user-management-page"
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25 }}
+      >
+        <div className="user-table-shell">
+          <div className="user-table-toolbar">
+            <div />
+            <div className="project-page-actions">
+              <div className="table-search">
+                <Search size={16} />
+                <input
+                  placeholder="Search customers..."
+                  value={customerSearch}
+                  onChange={(event) => setCustomerSearch(event.target.value)}
+                />
+              </div>
+              <Button label="Add Customer" icon="pi pi-plus" onClick={openCreateCustomerDialog} />
+            </div>
+          </div>
+
+          {customerError ? <small className="error-text">{customerError}</small> : null}
+
+          <DataTable
+            value={filteredCustomers}
+            loading={isCustomersLoading}
+            paginator
+            rows={6}
+            rowsPerPageOptions={[6, 10, 20]}
+            className="user-table"
+            emptyMessage="No customers found."
+            onRowClick={(event) => openCustomerDetailDialog(event.data as CustomerRecord)}
+            rowClassName={() => 'clickable-row'}
+          >
+            <Column
+              field="name"
+              header="Customer"
+              body={(customer: CustomerRecord) => (
+                <div className="user-name-cell">
+                  <strong>{customer.name}</strong>
+                  <span>{customer.company || customer.email}</span>
+                </div>
+              )}
+            />
+            <Column field="email" header="Primary Email" body={(customer: CustomerRecord) => <span className="muted-cell">{customer.email}</span>} />
+            <Column
+              field="contacts"
+              header="Contacts"
+              body={(customer: CustomerRecord) => <span className="muted-cell">{customer.contacts.length || 0}</span>}
+            />
+            <Column
+              field="project_ids"
+              header="Projects"
+              body={(customer: CustomerRecord) => (
+                <span className="muted-cell">
+                  {customer.project_ids.length
+                    ? customer.project_ids
+                        .slice(0, 2)
+                        .map((projectId) => projects.find((project) => project.id === projectId)?.name ?? 'Linked Project')
+                        .join(', ')
+                    : 'Not linked'}
+                </span>
+              )}
+            />
+            <Column
+              field="tags"
+              header="Tags"
+              body={(customer: CustomerRecord) => (
+                <div className="project-tag-list">
+                  {customer.tags.length ? (
+                    customer.tags.slice(0, 3).map((tag) => <Tag key={tag} value={tag} severity="info" rounded />)
+                  ) : (
+                    <span className="muted-cell">None</span>
+                  )}
+                </div>
+              )}
+            />
+          </DataTable>
+        </div>
+
+        <Dialog
+          header="Create Customer"
+          visible={isCustomerDialogOpen}
+          onHide={() => setIsCustomerDialogOpen(false)}
+          className="project-dialog"
+          modal
+        >
+          <div className="user-form">
+            <div className="form-grid">
+              <div className="p-inputgroup">
+                <span className="p-inputgroup-addon">
+                  <i className="pi pi-building" />
+                </span>
+                <FloatLabel className="user-float-field">
+                  <InputText id="customer-name" value={customerForm.name} onChange={(event) => setCustomerForm((current) => ({ ...current, name: event.target.value }))} />
+                  <label htmlFor="customer-name">Customer name</label>
+                </FloatLabel>
+              </div>
+
+              <div className="p-inputgroup">
+                <span className="p-inputgroup-addon">
+                  <Mail size={16} />
+                </span>
+                <FloatLabel className="user-float-field">
+                  <InputText id="customer-email" value={customerForm.email} onChange={(event) => setCustomerForm((current) => ({ ...current, email: event.target.value }))} />
+                  <label htmlFor="customer-email">Primary email</label>
+                </FloatLabel>
+              </div>
+
+              <div className="p-inputgroup">
+                <span className="p-inputgroup-addon">
+                  <i className="pi pi-briefcase" />
+                </span>
+                <FloatLabel className="user-float-field">
+                  <InputText id="customer-company" value={customerForm.company} onChange={(event) => setCustomerForm((current) => ({ ...current, company: event.target.value }))} />
+                  <label htmlFor="customer-company">Company</label>
+                </FloatLabel>
+              </div>
+
+              <div className="p-inputgroup">
+                <span className="p-inputgroup-addon">
+                  <i className="pi pi-phone" />
+                </span>
+                <FloatLabel className="user-float-field">
+                  <InputText id="customer-phone" value={customerForm.phone} onChange={(event) => setCustomerForm((current) => ({ ...current, phone: event.target.value }))} />
+                  <label htmlFor="customer-phone">Phone</label>
+                </FloatLabel>
+              </div>
+
+              <div className="p-inputgroup">
+                <span className="p-inputgroup-addon">
+                  <i className="pi pi-globe" />
+                </span>
+                <FloatLabel className="user-float-field">
+                  <InputText id="customer-timezone" value={customerForm.timezone} onChange={(event) => setCustomerForm((current) => ({ ...current, timezone: event.target.value }))} />
+                  <label htmlFor="customer-timezone">Timezone</label>
+                </FloatLabel>
+              </div>
+
+              <div className="p-inputgroup">
+                <span className="p-inputgroup-addon">
+                  <i className="pi pi-hashtag" />
+                </span>
+                <FloatLabel className="user-float-field">
+                  <MultiSelect
+                    id="customer-tags"
+                    value={customerForm.tags}
+                    options={['Enterprise', 'Priority', 'Renewal', 'Support', 'Implementation', 'Finance'].map((tag) => ({ label: tag, value: tag }))}
+                    onChange={(event) => setCustomerForm((current) => ({ ...current, tags: event.value as string[] }))}
+                    display="chip"
+                    className="full-width"
+                  />
+                  <label htmlFor="customer-tags">Tags</label>
+                </FloatLabel>
+              </div>
+
+              <div className="p-inputgroup">
+                <span className="p-inputgroup-addon">
+                  <Boxes size={16} />
+                </span>
+                <FloatLabel className="user-float-field">
+                  <MultiSelect
+                    id="customer-projects"
+                    value={customerForm.projectIds}
+                    options={projects.map((project) => ({ label: project.name, value: project.id }))}
+                    onChange={(event) => setCustomerForm((current) => ({ ...current, projectIds: event.value as string[] }))}
+                    display="chip"
+                    className="full-width"
+                  />
+                  <label htmlFor="customer-projects">Linked projects</label>
+                </FloatLabel>
+              </div>
+
+              <div className="p-inputgroup project-textarea-row">
+                <span className="p-inputgroup-addon">
+                  <i className="pi pi-align-left" />
+                </span>
+                <FloatLabel className="user-float-field">
+                  <InputTextarea
+                    id="customer-notes"
+                    value={customerForm.notes}
+                    onChange={(event) => setCustomerForm((current) => ({ ...current, notes: event.target.value }))}
+                    rows={4}
+                    autoResize
+                  />
+                  <label htmlFor="customer-notes">Notes</label>
+                </FloatLabel>
+              </div>
+            </div>
+
+            <div className="customer-contacts-block">
+              <div className="customer-contacts-header">
+                <h4>Contact Members</h4>
+                <Button type="button" label="Add Contact" text onClick={() => addCustomerContactRow('create')} />
+              </div>
+              {customerForm.contacts.map((contact, index) => (
+                <div key={`create-contact-${index}`} className="customer-contact-row">
+                  <InputText value={contact.name} placeholder="Name" onChange={(event) => updateCustomerContactRow(index, 'name', event.target.value, 'create')} />
+                  <InputText value={contact.role ?? ''} placeholder="Role" onChange={(event) => updateCustomerContactRow(index, 'role', event.target.value, 'create')} />
+                  <InputText value={contact.email ?? ''} placeholder="Email" onChange={(event) => updateCustomerContactRow(index, 'email', event.target.value, 'create')} />
+                  <InputText value={contact.phone ?? ''} placeholder="Phone" onChange={(event) => updateCustomerContactRow(index, 'phone', event.target.value, 'create')} />
+                  <Button type="button" icon="pi pi-trash" text onClick={() => removeCustomerContactRow(index, 'create')} />
+                </div>
+              ))}
+            </div>
+
+            {customerFormError ? <small className="error-text">{customerFormError}</small> : null}
+
+            <div className="dialog-actions">
+              <Button type="button" label="Cancel" text onClick={() => setIsCustomerDialogOpen(false)} />
+              <Button type="button" label={isSavingCustomer ? 'Creating...' : 'Create Customer'} loading={isSavingCustomer} onClick={() => void handleCreateCustomer()} />
+            </div>
+          </div>
+        </Dialog>
+
+        <Dialog
+          header={selectedCustomer ? `Customer Details: ${selectedCustomer.name}` : 'Customer Details'}
+          visible={isCustomerDetailOpen}
+          onHide={() => {
+            cancelCustomerDetailEditing();
+            setIsCustomerDetailOpen(false);
+          }}
+          className="project-detail-dialog"
+          position="right"
+          modal
+          draggable={false}
+          resizable={false}
+        >
+          {selectedCustomer ? (
+            <div className="user-form project-detail-form">
+              <div className="form-grid project-detail-grid">
+                <div className="p-inputgroup">
+                  <span className="p-inputgroup-addon">
+                    <i className="pi pi-building" />
+                  </span>
+                  <FloatLabel className="user-float-field">
+                    <InputText
+                      id="detail-customer-name"
+                      value={selectedCustomer.name}
+                      disabled={!isCustomerDetailEditing}
+                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, name: event.target.value } : current))}
+                    />
+                    <label htmlFor="detail-customer-name">Customer name</label>
+                  </FloatLabel>
+                </div>
+
+                <div className="p-inputgroup">
+                  <span className="p-inputgroup-addon">
+                    <Mail size={16} />
+                  </span>
+                  <FloatLabel className="user-float-field">
+                    <InputText
+                      id="detail-customer-email"
+                      value={selectedCustomer.email}
+                      disabled={!isCustomerDetailEditing}
+                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, email: event.target.value } : current))}
+                    />
+                    <label htmlFor="detail-customer-email">Primary email</label>
+                  </FloatLabel>
+                </div>
+
+                <div className="p-inputgroup">
+                  <span className="p-inputgroup-addon">
+                    <i className="pi pi-briefcase" />
+                  </span>
+                  <FloatLabel className="user-float-field">
+                    <InputText
+                      id="detail-customer-company"
+                      value={selectedCustomer.company ?? ''}
+                      disabled={!isCustomerDetailEditing}
+                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, company: event.target.value } : current))}
+                    />
+                    <label htmlFor="detail-customer-company">Company</label>
+                  </FloatLabel>
+                </div>
+
+                <div className="p-inputgroup">
+                  <span className="p-inputgroup-addon">
+                    <i className="pi pi-phone" />
+                  </span>
+                  <FloatLabel className="user-float-field">
+                    <InputText
+                      id="detail-customer-phone"
+                      value={selectedCustomer.phone ?? ''}
+                      disabled={!isCustomerDetailEditing}
+                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, phone: event.target.value } : current))}
+                    />
+                    <label htmlFor="detail-customer-phone">Phone</label>
+                  </FloatLabel>
+                </div>
+
+                <div className="p-inputgroup">
+                  <span className="p-inputgroup-addon">
+                    <i className="pi pi-globe" />
+                  </span>
+                  <FloatLabel className="user-float-field">
+                    <InputText
+                      id="detail-customer-timezone"
+                      value={selectedCustomer.timezone ?? ''}
+                      disabled={!isCustomerDetailEditing}
+                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, timezone: event.target.value } : current))}
+                    />
+                    <label htmlFor="detail-customer-timezone">Timezone</label>
+                  </FloatLabel>
+                </div>
+
+                <div className="p-inputgroup">
+                  <span className="p-inputgroup-addon">
+                    <i className="pi pi-hashtag" />
+                  </span>
+                  <FloatLabel className="user-float-field">
+                    <MultiSelect
+                      id="detail-customer-tags"
+                      value={selectedCustomer.tags}
+                      disabled={!isCustomerDetailEditing}
+                      options={['Enterprise', 'Priority', 'Renewal', 'Support', 'Implementation', 'Finance'].map((tag) => ({ label: tag, value: tag }))}
+                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, tags: event.value as string[] } : current))}
+                      display="chip"
+                      className="full-width"
+                    />
+                    <label htmlFor="detail-customer-tags">Tags</label>
+                  </FloatLabel>
+                </div>
+
+                <div className="p-inputgroup">
+                  <span className="p-inputgroup-addon">
+                    <Boxes size={16} />
+                  </span>
+                  <FloatLabel className="user-float-field">
+                    <MultiSelect
+                      id="detail-customer-projects"
+                      value={selectedCustomer.project_ids}
+                      disabled={!isCustomerDetailEditing}
+                      options={projects.map((project) => ({ label: project.name, value: project.id }))}
+                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, project_ids: event.value as string[] } : current))}
+                      display="chip"
+                      className="full-width"
+                    />
+                    <label htmlFor="detail-customer-projects">Linked projects</label>
+                  </FloatLabel>
+                </div>
+
+                <div className="p-inputgroup project-textarea-row">
+                  <span className="p-inputgroup-addon">
+                    <i className="pi pi-align-left" />
+                  </span>
+                  <FloatLabel className="user-float-field">
+                    <InputTextarea
+                      id="detail-customer-notes"
+                      value={selectedCustomer.notes ?? ''}
+                      disabled={!isCustomerDetailEditing}
+                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, notes: event.target.value } : current))}
+                      rows={4}
+                      autoResize
+                    />
+                    <label htmlFor="detail-customer-notes">Notes</label>
+                  </FloatLabel>
+                </div>
+              </div>
+
+              <div className="customer-contacts-block">
+                <div className="customer-contacts-header">
+                  <h4>Contact Members</h4>
+                  {isCustomerDetailEditing ? <Button type="button" label="Add Contact" text onClick={() => addCustomerContactRow('detail')} /> : null}
+                </div>
+                {selectedCustomer.contacts.map((contact, index) => (
+                  <div key={`detail-contact-${index}`} className="customer-contact-row">
+                    <InputText value={contact.name} placeholder="Name" disabled={!isCustomerDetailEditing} onChange={(event) => updateCustomerContactRow(index, 'name', event.target.value, 'detail')} />
+                    <InputText value={contact.role ?? ''} placeholder="Role" disabled={!isCustomerDetailEditing} onChange={(event) => updateCustomerContactRow(index, 'role', event.target.value, 'detail')} />
+                    <InputText value={contact.email ?? ''} placeholder="Email" disabled={!isCustomerDetailEditing} onChange={(event) => updateCustomerContactRow(index, 'email', event.target.value, 'detail')} />
+                    <InputText value={contact.phone ?? ''} placeholder="Phone" disabled={!isCustomerDetailEditing} onChange={(event) => updateCustomerContactRow(index, 'phone', event.target.value, 'detail')} />
+                    {isCustomerDetailEditing ? <Button type="button" icon="pi pi-trash" text onClick={() => removeCustomerContactRow(index, 'detail')} /> : null}
+                  </div>
+                ))}
+              </div>
+
+              {customerFormError ? <small className="error-text">{customerFormError}</small> : null}
+
+              <div className="dialog-actions project-detail-actions">
+                {!isCustomerDetailEditing ? (
+                  <Button type="button" icon="pi pi-pencil" label="Edit" text onClick={() => setIsCustomerDetailEditing(true)} />
+                ) : (
+                  <Button type="button" icon="pi pi-times" label="Cancel Edit" text onClick={cancelCustomerDetailEditing} />
+                )}
+                <Button
+                  type="button"
+                  label="Close"
+                  text
+                  onClick={() => {
+                    cancelCustomerDetailEditing();
+                    setIsCustomerDetailOpen(false);
+                  }}
+                />
+                {isCustomerDetailEditing ? (
+                  <Button type="button" label={isSavingCustomer ? 'Saving...' : 'Save Customer'} loading={isSavingCustomer} onClick={() => void handleUpdateCustomer()} />
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -1428,11 +2160,13 @@ function App() {
               <div className="header-actions">
                 <div className="user-chip">
                   <span className="user-avatar">{currentUserAvatar}</span>
-                  <span className="user-meta">
+                  <div className="user-meta">
                     <strong>{currentUserName}</strong>
-                    <small>{currentUserIdentifier}</small>
-                  </span>
-                  <span className="role-pill">{roleLabels[role]}</span>
+                    <span className="user-submeta">
+                      <small>{roleLabels[role]}</small>
+                      <small>{currentUserIdentifier}</small>
+                    </span>
+                  </div>
                 </div>
                 <button className="logout-btn" onClick={logout} type="button">
                   <LogOut size={16} />
@@ -1459,17 +2193,31 @@ function App() {
                 <div className="search-card">
                   <Search size={16} />
                   <input
-                    placeholder={isUserManagementView ? 'Search users by name, email, ID, or role...' : 'Search projects, articles, events...'}
-                    value={isUserManagementView ? userSearch : ''}
+                    placeholder={
+                      isUserManagementView
+                        ? 'Search users by name, email, ID, or role...'
+                        : isCustomerView
+                          ? 'Search customers by name, company, email, or tags...'
+                          : 'Search projects, articles, events...'
+                    }
+                    value={isUserManagementView ? userSearch : isCustomerView ? customerSearch : ''}
                     onChange={(event) => {
                       if (isUserManagementView) {
                         setUserSearch(event.target.value);
+                      } else if (isCustomerView) {
+                        setCustomerSearch(event.target.value);
                       }
                     }}
                   />
                   <Settings size={16} />
                 </div>
-                {isUserManagementView ? renderUserManagement() : isProjectView ? renderProjectManagement() : renderDefaultContent()}
+                {isUserManagementView
+                  ? renderUserManagement()
+                  : isProjectView
+                    ? renderProjectManagement()
+                    : isCustomerView
+                      ? renderCustomerManagement()
+                      : renderDefaultContent()}
               </section>
             </section>
           </motion.main>

@@ -55,6 +55,39 @@ export type ProjectCreatePayload = {
   tech_tags: string[];
 };
 
+export type CustomerContact = {
+  name: string;
+  role?: string | null;
+  email?: string | null;
+  phone?: string | null;
+};
+
+export type CustomerRecord = {
+  id: string;
+  name: string;
+  email: string;
+  company: string | null;
+  phone: string | null;
+  timezone: string | null;
+  tags: string[];
+  notes: string | null;
+  contacts: CustomerContact[];
+  project_ids: string[];
+  created_at: string;
+};
+
+export type CustomerPayload = {
+  name: string;
+  email: string;
+  company?: string;
+  phone?: string;
+  timezone?: string;
+  tags: string[];
+  notes?: string;
+  contacts: CustomerContact[];
+  project_ids: string[];
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -158,4 +191,32 @@ export async function updateProjectRequest(projectId: string, payload: ProjectCr
   });
 
   return parseResponse<ProjectRecord>(response);
+}
+
+export async function getCustomersRequest(): Promise<CustomerRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/customers`, {
+    headers: getAuthHeaders(),
+  });
+
+  return parseResponse<CustomerRecord[]>(response);
+}
+
+export async function createCustomerRequest(payload: CustomerPayload): Promise<CustomerRecord> {
+  const response = await fetch(`${API_BASE_URL}/customers`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  return parseResponse<CustomerRecord>(response);
+}
+
+export async function updateCustomerRequest(customerId: string, payload: CustomerPayload): Promise<CustomerRecord> {
+  const response = await fetch(`${API_BASE_URL}/customers/${customerId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  return parseResponse<CustomerRecord>(response);
 }
