@@ -1,3 +1,3 @@
-from app.routes import auth, customers, events_tasks, kb, projects, tickets, users
+from app.routes import auth, customers, events_tasks, kb, projects, ticket_configuration, tickets, users
 
-__all__ = ["auth", "users", "projects", "customers", "tickets", "kb", "events_tasks"]
+__all__ = ["auth", "users", "projects", "customers", "ticket_configuration", "tickets", "kb", "events_tasks"]

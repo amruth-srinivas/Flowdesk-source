@@ -1,51 +1,52 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   BookOpenText,
-  Boxes,
   CalendarDays,
   FileText,
   FolderKanban,
-  KeyRound,
-  LayoutDashboard,
-  LogOut,
-  Mail,
-  Search,
-  Settings,
-  ShieldCheck,
-  Users,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Button } from 'primereact/button';
-import { Column } from 'primereact/column';
-import { DataTable } from 'primereact/datatable';
-import { Dialog } from 'primereact/dialog';
-import { Dropdown } from 'primereact/dropdown';
-import { FloatLabel } from 'primereact/floatlabel';
-import { InputTextarea } from 'primereact/inputtextarea';
-import { InputSwitch } from 'primereact/inputswitch';
-import { InputText } from 'primereact/inputtext';
-import { MultiSelect } from 'primereact/multiselect';
-import { Steps } from 'primereact/steps';
 import { Tag } from 'primereact/tag';
 import {
   createCustomerRequest,
   createProjectRequest,
+  createTicketConfigurationRequest,
   createUserRequest,
+  deleteTicketConfigurationRequest,
   getCustomersRequest,
+  getEventsRequest,
   getProjectsRequest,
+  getTicketConfigurationRequest,
   getUsersRequest,
   loginRequest,
   type CustomerContact,
   type CustomerRecord,
   type ProjectRecord,
   type ProjectStatus,
+  type TicketConfigurationCreatePayload,
+  type TicketConfigurationRecord,
   updateCustomerRequest,
   updateProjectRequest,
+  updateTicketConfigurationRequest,
   updateUserPasswordRequest,
   updateUserRequest,
+  patchEventMilestoneRequest,
 } from './lib/api';
-import type { BackendRole, UserRecord } from './lib/api';
+import type { BackendRole, CalendarEventRecord, UserRecord } from './lib/api';
+import { GlobalSearchBar } from './components/layout/GlobalSearchBar';
+import { ModuleSidebar } from './components/layout/ModuleSidebar';
+import { TopHeader } from './components/layout/TopHeader';
+import { CustomerManagementSection } from './features/customer-management/CustomerManagementSection';
+import { ProjectManagementSection } from './features/project-management/ProjectManagementSection';
+import { CalendarEventsTable } from './features/calendar/CalendarEventsTable';
+import { CalendarWorkspace } from './features/calendar/CalendarWorkspace';
+import { TicketConfigurationSection } from './features/ticket-configuration/TicketConfigurationSection';
+import { UserManagementSection } from './features/user-management/UserManagementSection';
+import { CalendarPage } from './pages/Calendar';
+import { KnowledgeBasePage } from './pages/KnowledgeBase';
+import { LoginPage } from './pages/LoginPage';
+import { ProjectsPage } from './pages/Projects';
 
 type Role = 'admin' | 'teamLead' | 'teamMember';
 type TopPage = 'projects' | 'knowledgeBase' | 'calendar' | 'tickets' | 'kb';
@@ -69,17 +70,17 @@ const roleTopNav: Record<Role, NavItem[]> = {
       icon: <BookOpenText size={17} />,
       modules: ['Configuration', 'Articles', 'Customers'],
     },
-    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Add Event', 'View'] },
+    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View'] },
   ],
   teamLead: [
     { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['Open Tickets', 'Assigned', 'Resolved'] },
     { id: 'kb', label: 'KB', icon: <BookOpenText size={17} />, modules: ['Search', 'Articles', 'Guidelines'] },
-    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Add Event', 'View'] },
+    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View'] },
   ],
   teamMember: [
     { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['My Tickets', 'Updates', 'History'] },
     { id: 'kb', label: 'KB', icon: <BookOpenText size={17} />, modules: ['Search', 'Articles', 'FAQs'] },
-    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Add Event', 'View'] },
+    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View'] },
   ],
 };
 
@@ -228,16 +229,30 @@ function App() {
   const [createForm, setCreateForm] = useState(initialCreateForm);
   const [editForm, setEditForm] = useState(initialEditForm);
   const [passwordForm, setPasswordForm] = useState(initialPasswordForm);
+  const [ticketConfigurations, setTicketConfigurations] = useState<TicketConfigurationRecord[]>([]);
+  const [isTicketConfigLoading, setIsTicketConfigLoading] = useState(false);
+  const [ticketConfigError, setTicketConfigError] = useState('');
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEventRecord[]>([]);
+  const [isCalendarEventsLoading, setIsCalendarEventsLoading] = useState(false);
+  const [allCalendarEvents, setAllCalendarEvents] = useState<CalendarEventRecord[]>([]);
+  const [isAllCalendarEventsLoading, setIsAllCalendarEventsLoading] = useState(false);
+  const calendarRangeRef = useRef<{ from: string; to: string } | null>(null);
 
   const topNav = roleTopNav[role];
   const selectedPage = useMemo(
     () => topNav.find((item) => item.id === activePage) ?? topNav[0],
     [activePage, topNav],
   );
-  const currentModule = activeModule || selectedPage.modules[0];
+  const currentModule = useMemo(() => {
+    const modules = selectedPage.modules;
+    if (activeModule && modules.includes(activeModule)) {
+      return activeModule;
+    }
+    return modules[0];
+  }, [activeModule, selectedPage.modules]);
   const isUserManagementView = role === 'admin' && selectedPage.id === 'projects' && currentModule === 'User Management';
-  const isProjectView = role === 'admin' && selectedPage.id === 'projects' && currentModule === 'View';
   const isCustomerView = role === 'admin' && selectedPage.id === 'knowledgeBase' && currentModule === 'Customers';
+  const isConfigurationView = role === 'admin' && selectedPage.id === 'knowledgeBase' && currentModule === 'Configuration';
 
   const filteredUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
@@ -337,6 +352,63 @@ function App() {
     [filteredProjects],
   );
 
+  const loadCalendarEventsForRange = useCallback(async (from: string, to: string) => {
+    calendarRangeRef.current = { from, to };
+    setIsCalendarEventsLoading(true);
+    try {
+      const data = await getEventsRequest({ from, to });
+      setCalendarEvents(data);
+    } catch {
+      setCalendarEvents([]);
+    } finally {
+      setIsCalendarEventsLoading(false);
+    }
+  }, []);
+
+  const loadAllCalendarEvents = useCallback(async () => {
+    setIsAllCalendarEventsLoading(true);
+    try {
+      const data = await getEventsRequest();
+      setAllCalendarEvents(
+        [...data].sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime()),
+      );
+    } catch {
+      setAllCalendarEvents([]);
+    } finally {
+      setIsAllCalendarEventsLoading(false);
+    }
+  }, []);
+
+  const handleCalendarMonthRange = useCallback(
+    (from: string, to: string) => {
+      void loadCalendarEventsForRange(from, to);
+    },
+    [loadCalendarEventsForRange],
+  );
+
+  const refreshCalendarEvents = useCallback(() => {
+    const r = calendarRangeRef.current;
+    if (r) {
+      void loadCalendarEventsForRange(r.from, r.to);
+    } else {
+      const n = new Date();
+      const y = n.getFullYear();
+      const m = n.getMonth();
+      const from = new Date(y, m, 1, 0, 0, 0, 0).toISOString();
+      const to = new Date(y, m + 1, 0, 23, 59, 59, 999).toISOString();
+      void loadCalendarEventsForRange(from, to);
+    }
+    void loadAllCalendarEvents();
+  }, [loadCalendarEventsForRange, loadAllCalendarEvents]);
+
+  const handleCalendarMilestoneToggle = useCallback(
+    async (eventId: string, milestoneId: string, completed: boolean) => {
+      await patchEventMilestoneRequest(eventId, milestoneId, completed);
+      refreshCalendarEvents();
+    },
+    [refreshCalendarEvents],
+  );
+
   useEffect(() => {
     if (!isAuthenticated || role !== 'admin') {
       return;
@@ -346,6 +418,23 @@ function App() {
     void loadProjects();
     void loadCustomers();
   }, [isAuthenticated, role]);
+
+  useEffect(() => {
+    if (!isAuthenticated || role !== 'admin') {
+      return;
+    }
+    if (selectedPage.id !== 'knowledgeBase' || currentModule !== 'Configuration') {
+      return;
+    }
+    void loadTicketConfigurations();
+  }, [isAuthenticated, role, selectedPage.id, currentModule]);
+
+  useEffect(() => {
+    if (!isAuthenticated || selectedPage.id !== 'calendar' || currentModule !== 'View') {
+      return;
+    }
+    void loadAllCalendarEvents();
+  }, [isAuthenticated, selectedPage.id, currentModule, loadAllCalendarEvents]);
 
   async function loadUsers() {
     setIsUsersLoading(true);
@@ -395,6 +484,42 @@ function App() {
     } finally {
       setIsCustomersLoading(false);
     }
+  }
+
+  async function loadTicketConfigurations() {
+    setIsTicketConfigLoading(true);
+    setTicketConfigError('');
+    try {
+      const data = await getTicketConfigurationRequest();
+      setTicketConfigurations([...data].sort((left, right) => left.ticket_type.localeCompare(right.ticket_type)));
+    } catch (error) {
+      setTicketConfigurations([]);
+      setTicketConfigError(error instanceof Error ? error.message : 'Unable to load ticket configuration');
+    } finally {
+      setIsTicketConfigLoading(false);
+    }
+  }
+
+  async function handleCreateTicketConfiguration(payload: TicketConfigurationCreatePayload) {
+    const created = await createTicketConfigurationRequest(payload);
+    setTicketConfigurations((current) =>
+      [...current, created].sort((left, right) => left.ticket_type.localeCompare(right.ticket_type)),
+    );
+  }
+
+  async function handleUpdateTicketConfiguration(id: string, code: string, display_name?: string | null) {
+    const updated = await updateTicketConfigurationRequest(id, {
+      code,
+      ...(display_name !== undefined ? { display_name } : {}),
+    });
+    setTicketConfigurations((current) =>
+      current.map((row) => (row.id === updated.id ? updated : row)).sort((left, right) => left.ticket_type.localeCompare(right.ticket_type)),
+    );
+  }
+
+  async function handleDeleteTicketConfiguration(id: string) {
+    await deleteTicketConfigurationRequest(id);
+    setTicketConfigurations((current) => current.filter((row) => row.id !== id));
   }
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
@@ -825,1221 +950,161 @@ function App() {
 
   function renderUserManagement() {
     return (
-      <motion.article
-        key={`${selectedPage.id}-${currentModule}`}
-        className="page-card user-management-page"
-        initial={{ opacity: 0, y: 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
-      >
-        <div className="user-table-shell">
-          <div className="user-table-toolbar">
-            <div />
-            <div className="project-page-actions">
-              <div className="table-search">
-                <Search size={16} />
-                <input
-                  placeholder="Search users..."
-                  value={userSearch}
-                  onChange={(event) => setUserSearch(event.target.value)}
-                />
-              </div>
-              <Button label="Add User" icon="pi pi-user-plus" onClick={openCreateUserDialog} />
-            </div>
-          </div>
-
-          {userManagementError ? <small className="error-text">{userManagementError}</small> : null}
-
-          <DataTable
-            value={filteredUsers}
-            loading={isUsersLoading}
-            paginator
-            rows={6}
-            rowsPerPageOptions={[6, 10, 20]}
-            className="user-table"
-            emptyMessage="No users found."
-          >
-            <Column field="name" header="Name" body={(user: UserRecord) => <div className="user-name-cell"><strong>{user.name}</strong><span>{user.employee_id}</span></div>} />
-            <Column field="email" header="Email" body={(user: UserRecord) => <span className="muted-cell">{user.email}</span>} />
-            <Column field="role" header="Role" body={(user: UserRecord) => renderRoleTag(user.role)} />
-            <Column
-              field="is_active"
-              header="Status"
-              body={(user: UserRecord) => (
-                <Tag value={user.is_active ? 'Active' : 'Inactive'} severity={user.is_active ? 'success' : 'secondary'} rounded />
-              )}
-            />
-            <Column
-              field="created_at"
-              header="Created"
-              body={(user: UserRecord) => (
-                <span className="muted-cell">{new Date(user.created_at).toLocaleDateString()}</span>
-              )}
-            />
-            <Column
-              header="Actions"
-              body={(user: UserRecord) => (
-                <div className="user-actions-cell">
-                  <Button
-                    type="button"
-                    label="Edit"
-                    icon="pi pi-pencil"
-                    severity="secondary"
-                    text
-                    onClick={() => openEditUserDialog(user)}
-                  />
-                  <Button
-                    type="button"
-                    label="Password"
-                    icon="pi pi-key"
-                    text
-                    onClick={() => openPasswordDialog(user)}
-                  />
-                </div>
-              )}
-            />
-          </DataTable>
-        </div>
-
-        <Dialog
-          header={dialogMode === 'create' ? 'Create New User' : 'Edit User'}
-          visible={isUserDialogOpen}
-          onHide={() => setIsUserDialogOpen(false)}
-          className="user-dialog"
-          modal
-        >
-          <form onSubmit={dialogMode === 'create' ? handleCreateUser : handleEditUser} className="user-form">
-            <div className="form-grid">
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <i className="pi pi-id-card" />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText
-                    id="user-employee-id"
-                    value={dialogMode === 'create' ? createForm.employeeId : editForm.employeeId}
-                    onChange={(event) =>
-                      dialogMode === 'create'
-                        ? setCreateForm((current) => ({ ...current, employeeId: event.target.value }))
-                        : setEditForm((current) => ({ ...current, employeeId: event.target.value }))
-                    }
-                  />
-                  <label htmlFor="user-employee-id">Employee ID</label>
-                </FloatLabel>
-              </div>
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <i className="pi pi-user" />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText
-                    id="user-name"
-                    value={dialogMode === 'create' ? createForm.name : editForm.name}
-                    onChange={(event) =>
-                      dialogMode === 'create'
-                        ? setCreateForm((current) => ({ ...current, name: event.target.value }))
-                        : setEditForm((current) => ({ ...current, name: event.target.value }))
-                    }
-                  />
-                  <label htmlFor="user-name">Full name</label>
-                </FloatLabel>
-              </div>
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <Mail size={16} />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText
-                    id="user-email"
-                    value={dialogMode === 'create' ? createForm.email : editForm.email}
-                    onChange={(event) =>
-                      dialogMode === 'create'
-                        ? setCreateForm((current) => ({ ...current, email: event.target.value }))
-                        : setEditForm((current) => ({ ...current, email: event.target.value }))
-                    }
-                  />
-                  <label htmlFor="user-email">Email address</label>
-                </FloatLabel>
-              </div>
-
-              {dialogMode === 'create' ? (
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <KeyRound size={16} />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputText
-                      id="user-password"
-                      type={showCreatePassword ? 'text' : 'password'}
-                      value={createForm.password}
-                      onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))}
-                    />
-                    <label htmlFor="user-password">Temporary password</label>
-                  </FloatLabel>
-                  <button
-                    type="button"
-                    className="password-toggle-btn"
-                    onClick={() => setShowCreatePassword((current) => !current)}
-                    aria-label={showCreatePassword ? 'Hide password' : 'Show password'}
-                  >
-                    <i className={showCreatePassword ? 'pi pi-eye-slash' : 'pi pi-eye'} />
-                  </button>
-                </div>
-              ) : null}
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <i className="pi pi-briefcase" />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <Dropdown
-                    id="user-role"
-                    value={dialogMode === 'create' ? createForm.role : editForm.role}
-                    options={dialogMode === 'create' ? optionalRoleOptions : backendRoleOptions}
-                    onChange={(event) =>
-                      dialogMode === 'create'
-                        ? setCreateForm((current) => ({ ...current, role: event.value as BackendRole | '' }))
-                        : setEditForm((current) => ({ ...current, role: event.value as BackendRole }))
-                    }
-                    className="full-width"
-                  />
-                  <label htmlFor="user-role">{dialogMode === 'create' ? 'Workspace role (optional)' : 'Workspace role'}</label>
-                </FloatLabel>
-              </div>
-            </div>
-
-            {dialogMode === 'create' ? (
-              <small className="helper-text">
-                Role selection can be skipped for now. The user will start as a team member until a project assignment is made.
-              </small>
-            ) : (
-              <label className="status-toggle">
-                <div>
-                  <strong>Account status</strong>
-                  <small>Disable sign-in without removing the user from records.</small>
-                </div>
-                <InputSwitch
-                  checked={editForm.isActive}
-                  onChange={(event) => setEditForm((current) => ({ ...current, isActive: Boolean(event.value) }))}
-                />
-              </label>
-            )}
-
-            {userFormError ? <small className="error-text">{userFormError}</small> : null}
-
-            <div className="dialog-actions">
-              <Button type="button" label="Cancel" text onClick={() => setIsUserDialogOpen(false)} />
-              <Button
-                type="submit"
-                label={dialogMode === 'create' ? (isSavingUser ? 'Creating...' : 'Create User') : isSavingUser ? 'Saving...' : 'Save Changes'}
-                loading={isSavingUser}
-              />
-            </div>
-          </form>
-        </Dialog>
-
-        <Dialog
-          header={`Change Password${passwordForm.name ? ` for ${passwordForm.name}` : ''}`}
-          visible={isPasswordDialogOpen}
-          onHide={() => setIsPasswordDialogOpen(false)}
-          className="user-dialog"
-          modal
-        >
-          <form onSubmit={handlePasswordChange} className="user-form">
-            <div className="form-grid">
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <KeyRound size={16} />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText
-                    id="new-password"
-                    type={showNewPassword ? 'text' : 'password'}
-                    value={passwordForm.password}
-                    onChange={(event) => setPasswordForm((current) => ({ ...current, password: event.target.value }))}
-                  />
-                  <label htmlFor="new-password">New password</label>
-                </FloatLabel>
-                <button
-                  type="button"
-                  className="password-toggle-btn"
-                  onClick={() => setShowNewPassword((current) => !current)}
-                  aria-label={showNewPassword ? 'Hide password' : 'Show password'}
-                >
-                  <i className={showNewPassword ? 'pi pi-eye-slash' : 'pi pi-eye'} />
-                </button>
-              </div>
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <KeyRound size={16} />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText
-                    id="confirm-password"
-                    type={showConfirmPassword ? 'text' : 'password'}
-                    value={passwordForm.confirmPassword}
-                    onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))}
-                  />
-                  <label htmlFor="confirm-password">Confirm password</label>
-                </FloatLabel>
-                <button
-                  type="button"
-                  className="password-toggle-btn"
-                  onClick={() => setShowConfirmPassword((current) => !current)}
-                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
-                >
-                  <i className={showConfirmPassword ? 'pi pi-eye-slash' : 'pi pi-eye'} />
-                </button>
-              </div>
-            </div>
-
-            {passwordFormError ? <small className="error-text">{passwordFormError}</small> : null}
-
-            <div className="dialog-actions">
-              <Button type="button" label="Cancel" text onClick={() => setIsPasswordDialogOpen(false)} />
-              <Button type="submit" label={isSavingPassword ? 'Updating...' : 'Update Password'} loading={isSavingPassword} />
-            </div>
-          </form>
-        </Dialog>
-      </motion.article>
+      <UserManagementSection
+        viewKey={`${selectedPage.id}-${currentModule}`}
+        userSearch={userSearch}
+        onUserSearchChange={setUserSearch}
+        onOpenCreateUserDialog={openCreateUserDialog}
+        userManagementError={userManagementError}
+        filteredUsers={filteredUsers}
+        isUsersLoading={isUsersLoading}
+        renderRoleTag={renderRoleTag}
+        onOpenEditUserDialog={openEditUserDialog}
+        onOpenPasswordDialog={openPasswordDialog}
+        dialogMode={dialogMode}
+        isUserDialogOpen={isUserDialogOpen}
+        onCloseUserDialog={() => setIsUserDialogOpen(false)}
+        handleCreateUser={handleCreateUser}
+        handleEditUser={handleEditUser}
+        createForm={createForm}
+        editForm={editForm}
+        setCreateForm={setCreateForm}
+        setEditForm={setEditForm}
+        showCreatePassword={showCreatePassword}
+        setShowCreatePassword={setShowCreatePassword}
+        optionalRoleOptions={optionalRoleOptions}
+        backendRoleOptions={backendRoleOptions}
+        userFormError={userFormError}
+        isSavingUser={isSavingUser}
+        isPasswordDialogOpen={isPasswordDialogOpen}
+        onClosePasswordDialog={() => setIsPasswordDialogOpen(false)}
+        handlePasswordChange={handlePasswordChange}
+        passwordForm={passwordForm}
+        setPasswordForm={setPasswordForm}
+        showNewPassword={showNewPassword}
+        setShowNewPassword={setShowNewPassword}
+        showConfirmPassword={showConfirmPassword}
+        setShowConfirmPassword={setShowConfirmPassword}
+        passwordFormError={passwordFormError}
+        isSavingPassword={isSavingPassword}
+      />
     );
   }
 
   function renderProjectManagement() {
     return (
-      <motion.article
-        key={`${selectedPage.id}-${currentModule}`}
-        className="page-card user-management-page"
-        initial={{ opacity: 0, y: 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
-      >
-        <section className="project-workspace">
-          <div className="project-toolbar-card">
-            <div />
-            <div className="project-page-actions">
-              <div className="project-view-toggle" role="tablist" aria-label="Project view selector">
-                <button
-                  type="button"
-                  className={projectViewMode === 'table' ? 'active' : ''}
-                  onClick={() => setProjectViewMode('table')}
-                >
-                  Table
-                </button>
-                <button
-                  type="button"
-                  className={projectViewMode === 'kanban' ? 'active' : ''}
-                  onClick={() => setProjectViewMode('kanban')}
-                >
-                  Kanban
-                </button>
-              </div>
-              <div className="table-search">
-                <Search size={16} />
-                <input
-                  placeholder="Search projects..."
-                  value={projectSearch}
-                  onChange={(event) => setProjectSearch(event.target.value)}
-                />
-              </div>
-              <Button label="Add Project" icon="pi pi-plus" onClick={openCreateProjectDialog} />
-            </div>
-          </div>
+      <ProjectManagementSection
+        viewKey={`${selectedPage.id}-${currentModule}`}
+        projectViewMode={projectViewMode}
+        setProjectViewMode={setProjectViewMode}
+        projectSearch={projectSearch}
+        setProjectSearch={setProjectSearch}
+        openCreateProjectDialog={openCreateProjectDialog}
+        projectError={projectError}
+        filteredProjects={filteredProjects}
+        isProjectsLoading={isProjectsLoading}
+        openProjectDetailDialog={openProjectDetailDialog}
+        userLookup={userLookup}
+        projectStatusSeverities={projectStatusSeverities}
+        projectsByStatus={projectsByStatus}
+        isProjectDialogOpen={isProjectDialogOpen}
+        setIsProjectDialogOpen={setIsProjectDialogOpen}
+        projectStep={projectStep}
+        goToProjectStep={goToProjectStep}
+        projectForm={projectForm}
+        setProjectForm={setProjectForm}
+        projectStatusOptions={projectStatusOptions}
+        leadOptions={leadOptions}
+        memberOptions={memberOptions}
+        projectFormError={projectFormError}
+        isSavingProject={isSavingProject}
+        handleCreateProject={handleCreateProject}
+        setProjectStep={setProjectStep}
+        isProjectDetailOpen={isProjectDetailOpen}
+        setIsProjectDetailOpen={setIsProjectDetailOpen}
+        selectedProject={selectedProject}
+        isProjectDetailEditing={isProjectDetailEditing}
+        setIsProjectDetailEditing={setIsProjectDetailEditing}
+        setSelectedProject={setSelectedProject}
+        projectDetailMemberOptions={projectDetailMemberOptions}
+        cancelProjectDetailEditing={cancelProjectDetailEditing}
+        projectDetailError={projectDetailError}
+        isSavingProjectDetail={isSavingProjectDetail}
+        handleUpdateProject={handleUpdateProject}
+      />
+    );
+  }
 
-          {projectError ? <small className="error-text">{projectError}</small> : null}
+  function renderTicketConfiguration() {
+    return (
+      <TicketConfigurationSection
+        viewKey={`${selectedPage.id}-${currentModule}`}
+        rows={ticketConfigurations}
+        isLoading={isTicketConfigLoading}
+        error={ticketConfigError}
+        onCreate={handleCreateTicketConfiguration}
+        onUpdate={handleUpdateTicketConfiguration}
+        onDelete={handleDeleteTicketConfiguration}
+      />
+    );
+  }
 
-          {projectViewMode === 'table' ? (
-            <div className="user-table-shell project-shell">
-              <DataTable
-                value={filteredProjects}
-                loading={isProjectsLoading}
-                paginator
-                rows={6}
-                rowsPerPageOptions={[6, 10, 20]}
-                className="user-table"
-                emptyMessage="No projects found."
-                onRowClick={(event) => openProjectDetailDialog(event.data as ProjectRecord)}
-                rowClassName={() => 'clickable-row'}
-              >
-                <Column
-                  field="name"
-                  header="Project"
-                  body={(project: ProjectRecord) => (
-                    <div className="user-name-cell">
-                      <strong>{project.name}</strong>
-                      <span>{project.description || 'No description added yet.'}</span>
-                    </div>
-                  )}
-                />
-                <Column
-                  field="status"
-                  header="Status"
-                  body={(project: ProjectRecord) => (
-                    <Tag value={project.status.replace('-', ' ')} severity={projectStatusSeverities[project.status]} rounded />
-                  )}
-                />
-                <Column
-                  field="lead_id"
-                  header="Team Lead"
-                  body={(project: ProjectRecord) => (
-                    <span className="muted-cell">
-                      {project.lead_id ? userLookup.get(project.lead_id)?.name ?? 'Assigned user' : 'Not assigned'}
-                    </span>
-                  )}
-                />
-                <Column
-                  field="tech_tags"
-                  header="Tech Tags"
-                  body={(project: ProjectRecord) => (
-                    <div className="project-tag-list">
-                      {project.tech_tags.length ? (
-                        project.tech_tags.slice(0, 3).map((tag) => <Tag key={tag} value={tag} severity="info" rounded />)
-                      ) : (
-                        <span className="muted-cell">None</span>
-                      )}
-                    </div>
-                  )}
-                />
-                <Column
-                  field="created_at"
-                  header="Created"
-                  body={(project: ProjectRecord) => (
-                    <span className="muted-cell">{new Date(project.created_at).toLocaleDateString()}</span>
-                  )}
-                />
-              </DataTable>
-            </div>
-          ) : (
-            <div className="kanban-board">
-              {projectsByStatus.map((statusGroup) => (
-                <section key={statusGroup.value} className="kanban-column">
-                  <div className="kanban-column-header">
-                    <div>
-                      <h4>{statusGroup.label}</h4>
-                      <small>{statusGroup.projects.length} projects</small>
-                    </div>
-                    <Tag value={statusGroup.label} severity={projectStatusSeverities[statusGroup.value]} rounded />
-                  </div>
-                  <div className="kanban-column-body">
-                    {statusGroup.projects.length ? (
-                      statusGroup.projects.map((project) => (
-                        <button
-                          key={project.id}
-                          type="button"
-                          className="kanban-card"
-                          onClick={() => openProjectDetailDialog(project)}
-                        >
-                          <div className="kanban-card-top">
-                            <strong>{project.name}</strong>
-                            <span>{new Date(project.created_at).toLocaleDateString()}</span>
-                          </div>
-                          <p>{project.description || 'No description added yet.'}</p>
-                          <div className="kanban-meta">
-                            <small>Lead: {project.lead_id ? userLookup.get(project.lead_id)?.name ?? 'Assigned user' : 'Not assigned'}</small>
-                          </div>
-                          <div className="project-tag-list">
-                            {project.tech_tags.length ? (
-                              project.tech_tags.slice(0, 3).map((tag) => <Tag key={tag} value={tag} severity="info" rounded />)
-                            ) : (
-                              <span className="muted-cell">No tags</span>
-                            )}
-                          </div>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="kanban-empty">No projects in this lane.</div>
-                    )}
-                  </div>
-                </section>
-              ))}
-            </div>
-          )}
-        </section>
+  function renderCalendarWorkspace() {
+    return (
+      <CalendarWorkspace
+        viewKey={`${selectedPage.id}-${currentModule}`}
+        events={calendarEvents}
+        isLoading={isCalendarEventsLoading}
+        isAdmin={role === 'admin'}
+        projects={projects}
+        onToggleMilestone={handleCalendarMilestoneToggle}
+        onMonthRangeChange={handleCalendarMonthRange}
+        onCreated={refreshCalendarEvents}
+      />
+    );
+  }
 
-        <Dialog
-          header="Create Project"
-          visible={isProjectDialogOpen}
-          onHide={() => setIsProjectDialogOpen(false)}
-          className="project-dialog"
-          modal
-        >
-          <div className="user-form">
-            <Steps
-              model={[{ label: 'Project Details' }, { label: 'Team Assignment' }]}
-              activeIndex={projectStep}
-              readOnly={false}
-              onSelect={(event) => {
-                event.originalEvent.preventDefault();
-                event.originalEvent.stopPropagation();
-                goToProjectStep(event.index as ProjectFormStep);
-              }}
-              className="project-steps"
-            />
-
-            {projectStep === 0 ? (
-              <div className="form-grid">
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <Boxes size={16} />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputText
-                      id="project-name"
-                      value={projectForm.name}
-                      onChange={(event) => setProjectForm((current) => ({ ...current, name: event.target.value }))}
-                    />
-                    <label htmlFor="project-name">Project name</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-flag" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <Dropdown
-                      id="project-status"
-                      value={projectForm.status}
-                      options={projectStatusOptions}
-                      onChange={(event) =>
-                        setProjectForm((current) => ({ ...current, status: event.value as ProjectStatus }))
-                      }
-                      className="full-width"
-                    />
-                    <label htmlFor="project-status">Project status</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup project-textarea-row">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-align-left" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputTextarea
-                      id="project-description"
-                      value={projectForm.description}
-                      onChange={(event) => setProjectForm((current) => ({ ...current, description: event.target.value }))}
-                      rows={4}
-                      autoResize
-                    />
-                    <label htmlFor="project-description">Project description</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-hashtag" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <MultiSelect
-                      id="project-tags"
-                      value={projectForm.techTags}
-                      options={[
-                        'React',
-                        'TypeScript',
-                        'FastAPI',
-                        'PostgreSQL',
-                        'Docker',
-                        'Node.js',
-                        'Python',
-                        'UI/UX',
-                        'DevOps',
-                      ].map((tag) => ({ label: tag, value: tag }))}
-                      onChange={(event) =>
-                        setProjectForm((current) => ({ ...current, techTags: event.value as string[] }))
-                      }
-                      display="chip"
-                      placeholder="Choose tech tags"
-                      className="full-width"
-                    />
-                    <label htmlFor="project-tags">Tech tags</label>
-                  </FloatLabel>
-                </div>
-              </div>
-            ) : (
-              <div className="form-grid">
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-user" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <Dropdown
-                      id="project-lead"
-                      value={projectForm.leadId}
-                      options={[{ label: 'Assign later', value: '' }, ...leadOptions]}
-                      onChange={(event) =>
-                        setProjectForm((current) => ({
-                          ...current,
-                          leadId: event.value as string,
-                          memberIds: current.memberIds.filter((memberId) => memberId !== event.value),
-                        }))
-                      }
-                      className="full-width"
-                    />
-                    <label htmlFor="project-lead">Team lead</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <Users size={16} />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <MultiSelect
-                      id="project-members"
-                      value={projectForm.memberIds}
-                      options={memberOptions}
-                      onChange={(event) =>
-                        setProjectForm((current) => ({ ...current, memberIds: event.value as string[] }))
-                      }
-                      display="chip"
-                      placeholder="Select project members"
-                      className="full-width"
-                    />
-                    <label htmlFor="project-members">Team members</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="project-summary-card">
-                  <h4>Project summary</h4>
-                  <p>{projectForm.name || 'Untitled project'}</p>
-                  <small>Status: {projectForm.status.replace('-', ' ')}</small>
-                  <small>Lead: {projectForm.leadId ? userLookup.get(projectForm.leadId)?.name ?? 'Assigned user' : 'Not assigned'}</small>
-                  <small>Members: {projectForm.memberIds.length}</small>
-                </div>
-              </div>
-            )}
-
-            {projectFormError ? <small className="error-text">{projectFormError}</small> : null}
-
-            <div className="dialog-actions">
-              {projectStep === 1 ? (
-                <Button type="button" label="Back" text onClick={() => setProjectStep(0)} />
-              ) : null}
-              {projectStep === 0 ? (
-                <Button type="button" label="Next" onClick={() => goToProjectStep(1)} />
-              ) : (
-                <Button
-                  type="button"
-                  label={isSavingProject ? 'Creating...' : 'Create Project'}
-                  loading={isSavingProject}
-                  onClick={() => void handleCreateProject()}
-                />
-              )}
-            </div>
-          </div>
-        </Dialog>
-
-        <Dialog
-          header={selectedProject ? `Project Details: ${selectedProject.name}` : 'Project Details'}
-          visible={isProjectDetailOpen}
-          onHide={() => {
-            setIsProjectDetailEditing(false);
-            setIsProjectDetailOpen(false);
-          }}
-          className="project-detail-dialog"
-          position="right"
-          modal
-          draggable={false}
-          resizable={false}
-        >
-          {selectedProject ? (
-            <div className="user-form project-detail-form">
-              <div className="form-grid project-detail-grid">
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <Boxes size={16} />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputText
-                      id="detail-project-name"
-                      value={selectedProject.name}
-                      disabled={!isProjectDetailEditing}
-                      onChange={(event) =>
-                        setSelectedProject((current) => (current ? { ...current, name: event.target.value } : current))
-                      }
-                    />
-                    <label htmlFor="detail-project-name">Project name</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-flag" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <Dropdown
-                      id="detail-project-status"
-                      value={selectedProject.status}
-                      options={projectStatusOptions}
-                      disabled={!isProjectDetailEditing}
-                      onChange={(event) =>
-                        setSelectedProject((current) =>
-                          current ? { ...current, status: event.value as ProjectStatus } : current,
-                        )
-                      }
-                      className="full-width"
-                    />
-                    <label htmlFor="detail-project-status">Status</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup project-textarea-row project-detail-span-2">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-align-left" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputTextarea
-                      id="detail-project-description"
-                      value={selectedProject.description ?? ''}
-                      disabled={!isProjectDetailEditing}
-                      onChange={(event) =>
-                        setSelectedProject((current) =>
-                          current ? { ...current, description: event.target.value } : current,
-                        )
-                      }
-                      rows={5}
-                      autoResize
-                    />
-                    <label htmlFor="detail-project-description">Description</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup project-detail-span-2">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-hashtag" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <MultiSelect
-                      id="detail-project-tags"
-                      value={selectedProject.tech_tags}
-                      disabled={!isProjectDetailEditing}
-                      options={[
-                        'React',
-                        'TypeScript',
-                        'FastAPI',
-                        'PostgreSQL',
-                        'Docker',
-                        'Node.js',
-                        'Python',
-                        'UI/UX',
-                        'DevOps',
-                      ].map((tag) => ({ label: tag, value: tag }))}
-                      onChange={(event) =>
-                        setSelectedProject((current) =>
-                          current ? { ...current, tech_tags: event.value as string[] } : current,
-                        )
-                      }
-                      display="chip"
-                      className="full-width"
-                    />
-                    <label htmlFor="detail-project-tags">Tech tags</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-user" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <Dropdown
-                      id="detail-project-lead"
-                      value={selectedProject.lead_id ?? ''}
-                      options={[{ label: 'Assign later', value: '' }, ...leadOptions]}
-                      disabled={!isProjectDetailEditing}
-                      onChange={(event) =>
-                        setSelectedProject((current) =>
-                          current
-                            ? {
-                                ...current,
-                                lead_id: (event.value as string) || null,
-                                member_ids: current.member_ids.filter((memberId) => memberId !== event.value),
-                              }
-                            : current,
-                        )
-                      }
-                      className="full-width"
-                    />
-                    <label htmlFor="detail-project-lead">Team lead</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <Users size={16} />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <MultiSelect
-                      id="detail-project-members"
-                      value={selectedProject.member_ids}
-                      options={projectDetailMemberOptions}
-                      disabled={!isProjectDetailEditing}
-                      onChange={(event) =>
-                        setSelectedProject((current) =>
-                          current ? { ...current, member_ids: event.value as string[] } : current,
-                        )
-                      }
-                      display="chip"
-                      className="full-width"
-                    />
-                    <label htmlFor="detail-project-members">Team members</label>
-                  </FloatLabel>
-                </div>
-              </div>
-
-              {projectDetailError ? <small className="error-text">{projectDetailError}</small> : null}
-
-              <div className="dialog-actions project-detail-actions">
-                {!isProjectDetailEditing ? (
-                  <Button
-                    type="button"
-                    icon="pi pi-pencil"
-                    label="Edit"
-                    text
-                    onClick={() => setIsProjectDetailEditing(true)}
-                  />
-                ) : (
-                  <Button
-                    type="button"
-                    icon="pi pi-times"
-                    label="Cancel Edit"
-                    text
-                    onClick={cancelProjectDetailEditing}
-                  />
-                )}
-                <Button
-                  type="button"
-                  label="Close"
-                  text
-                  onClick={() => {
-                    cancelProjectDetailEditing();
-                    setIsProjectDetailOpen(false);
-                  }}
-                />
-                {isProjectDetailEditing ? (
-                  <Button
-                    type="button"
-                    label={isSavingProjectDetail ? 'Saving...' : 'Save Project'}
-                    loading={isSavingProjectDetail}
-                    onClick={() => void handleUpdateProject()}
-                  />
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-        </Dialog>
-      </motion.article>
+  function renderCalendarEventsTable() {
+    return (
+      <CalendarEventsTable
+        viewKey={`${selectedPage.id}-${currentModule}`}
+        rows={allCalendarEvents}
+        isLoading={isAllCalendarEventsLoading}
+      />
     );
   }
 
   function renderCustomerManagement() {
     return (
-      <motion.article
-        key={`${selectedPage.id}-${currentModule}`}
-        className="page-card user-management-page"
-        initial={{ opacity: 0, y: 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
-      >
-        <div className="user-table-shell">
-          <div className="user-table-toolbar">
-            <div />
-            <div className="project-page-actions">
-              <div className="table-search">
-                <Search size={16} />
-                <input
-                  placeholder="Search customers..."
-                  value={customerSearch}
-                  onChange={(event) => setCustomerSearch(event.target.value)}
-                />
-              </div>
-              <Button label="Add Customer" icon="pi pi-plus" onClick={openCreateCustomerDialog} />
-            </div>
-          </div>
-
-          {customerError ? <small className="error-text">{customerError}</small> : null}
-
-          <DataTable
-            value={filteredCustomers}
-            loading={isCustomersLoading}
-            paginator
-            rows={6}
-            rowsPerPageOptions={[6, 10, 20]}
-            className="user-table"
-            emptyMessage="No customers found."
-            onRowClick={(event) => openCustomerDetailDialog(event.data as CustomerRecord)}
-            rowClassName={() => 'clickable-row'}
-          >
-            <Column
-              field="name"
-              header="Customer"
-              body={(customer: CustomerRecord) => (
-                <div className="user-name-cell">
-                  <strong>{customer.name}</strong>
-                  <span>{customer.company || customer.email}</span>
-                </div>
-              )}
-            />
-            <Column field="email" header="Primary Email" body={(customer: CustomerRecord) => <span className="muted-cell">{customer.email}</span>} />
-            <Column
-              field="contacts"
-              header="Contacts"
-              body={(customer: CustomerRecord) => <span className="muted-cell">{customer.contacts.length || 0}</span>}
-            />
-            <Column
-              field="project_ids"
-              header="Projects"
-              body={(customer: CustomerRecord) => (
-                <span className="muted-cell">
-                  {customer.project_ids.length
-                    ? customer.project_ids
-                        .slice(0, 2)
-                        .map((projectId) => projects.find((project) => project.id === projectId)?.name ?? 'Linked Project')
-                        .join(', ')
-                    : 'Not linked'}
-                </span>
-              )}
-            />
-            <Column
-              field="tags"
-              header="Tags"
-              body={(customer: CustomerRecord) => (
-                <div className="project-tag-list">
-                  {customer.tags.length ? (
-                    customer.tags.slice(0, 3).map((tag) => <Tag key={tag} value={tag} severity="info" rounded />)
-                  ) : (
-                    <span className="muted-cell">None</span>
-                  )}
-                </div>
-              )}
-            />
-          </DataTable>
-        </div>
-
-        <Dialog
-          header="Create Customer"
-          visible={isCustomerDialogOpen}
-          onHide={() => setIsCustomerDialogOpen(false)}
-          className="project-dialog"
-          modal
-        >
-          <div className="user-form">
-            <div className="form-grid">
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <i className="pi pi-building" />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText id="customer-name" value={customerForm.name} onChange={(event) => setCustomerForm((current) => ({ ...current, name: event.target.value }))} />
-                  <label htmlFor="customer-name">Customer name</label>
-                </FloatLabel>
-              </div>
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <Mail size={16} />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText id="customer-email" value={customerForm.email} onChange={(event) => setCustomerForm((current) => ({ ...current, email: event.target.value }))} />
-                  <label htmlFor="customer-email">Primary email</label>
-                </FloatLabel>
-              </div>
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <i className="pi pi-briefcase" />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText id="customer-company" value={customerForm.company} onChange={(event) => setCustomerForm((current) => ({ ...current, company: event.target.value }))} />
-                  <label htmlFor="customer-company">Company</label>
-                </FloatLabel>
-              </div>
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <i className="pi pi-phone" />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText id="customer-phone" value={customerForm.phone} onChange={(event) => setCustomerForm((current) => ({ ...current, phone: event.target.value }))} />
-                  <label htmlFor="customer-phone">Phone</label>
-                </FloatLabel>
-              </div>
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <i className="pi pi-globe" />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputText id="customer-timezone" value={customerForm.timezone} onChange={(event) => setCustomerForm((current) => ({ ...current, timezone: event.target.value }))} />
-                  <label htmlFor="customer-timezone">Timezone</label>
-                </FloatLabel>
-              </div>
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <i className="pi pi-hashtag" />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <MultiSelect
-                    id="customer-tags"
-                    value={customerForm.tags}
-                    options={['Enterprise', 'Priority', 'Renewal', 'Support', 'Implementation', 'Finance'].map((tag) => ({ label: tag, value: tag }))}
-                    onChange={(event) => setCustomerForm((current) => ({ ...current, tags: event.value as string[] }))}
-                    display="chip"
-                    className="full-width"
-                  />
-                  <label htmlFor="customer-tags">Tags</label>
-                </FloatLabel>
-              </div>
-
-              <div className="p-inputgroup">
-                <span className="p-inputgroup-addon">
-                  <Boxes size={16} />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <MultiSelect
-                    id="customer-projects"
-                    value={customerForm.projectIds}
-                    options={projects.map((project) => ({ label: project.name, value: project.id }))}
-                    onChange={(event) => setCustomerForm((current) => ({ ...current, projectIds: event.value as string[] }))}
-                    display="chip"
-                    className="full-width"
-                  />
-                  <label htmlFor="customer-projects">Linked projects</label>
-                </FloatLabel>
-              </div>
-
-              <div className="p-inputgroup project-textarea-row">
-                <span className="p-inputgroup-addon">
-                  <i className="pi pi-align-left" />
-                </span>
-                <FloatLabel className="user-float-field">
-                  <InputTextarea
-                    id="customer-notes"
-                    value={customerForm.notes}
-                    onChange={(event) => setCustomerForm((current) => ({ ...current, notes: event.target.value }))}
-                    rows={4}
-                    autoResize
-                  />
-                  <label htmlFor="customer-notes">Notes</label>
-                </FloatLabel>
-              </div>
-            </div>
-
-            <div className="customer-contacts-block">
-              <div className="customer-contacts-header">
-                <h4>Contact Members</h4>
-                <Button type="button" label="Add Contact" text onClick={() => addCustomerContactRow('create')} />
-              </div>
-              {customerForm.contacts.map((contact, index) => (
-                <div key={`create-contact-${index}`} className="customer-contact-row">
-                  <InputText value={contact.name} placeholder="Name" onChange={(event) => updateCustomerContactRow(index, 'name', event.target.value, 'create')} />
-                  <InputText value={contact.role ?? ''} placeholder="Role" onChange={(event) => updateCustomerContactRow(index, 'role', event.target.value, 'create')} />
-                  <InputText value={contact.email ?? ''} placeholder="Email" onChange={(event) => updateCustomerContactRow(index, 'email', event.target.value, 'create')} />
-                  <InputText value={contact.phone ?? ''} placeholder="Phone" onChange={(event) => updateCustomerContactRow(index, 'phone', event.target.value, 'create')} />
-                  <Button type="button" icon="pi pi-trash" text onClick={() => removeCustomerContactRow(index, 'create')} />
-                </div>
-              ))}
-            </div>
-
-            {customerFormError ? <small className="error-text">{customerFormError}</small> : null}
-
-            <div className="dialog-actions">
-              <Button type="button" label="Cancel" text onClick={() => setIsCustomerDialogOpen(false)} />
-              <Button type="button" label={isSavingCustomer ? 'Creating...' : 'Create Customer'} loading={isSavingCustomer} onClick={() => void handleCreateCustomer()} />
-            </div>
-          </div>
-        </Dialog>
-
-        <Dialog
-          header={selectedCustomer ? `Customer Details: ${selectedCustomer.name}` : 'Customer Details'}
-          visible={isCustomerDetailOpen}
-          onHide={() => {
-            cancelCustomerDetailEditing();
-            setIsCustomerDetailOpen(false);
-          }}
-          className="project-detail-dialog"
-          position="right"
-          modal
-          draggable={false}
-          resizable={false}
-        >
-          {selectedCustomer ? (
-            <div className="user-form project-detail-form">
-              <div className="form-grid project-detail-grid">
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-building" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputText
-                      id="detail-customer-name"
-                      value={selectedCustomer.name}
-                      disabled={!isCustomerDetailEditing}
-                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, name: event.target.value } : current))}
-                    />
-                    <label htmlFor="detail-customer-name">Customer name</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <Mail size={16} />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputText
-                      id="detail-customer-email"
-                      value={selectedCustomer.email}
-                      disabled={!isCustomerDetailEditing}
-                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, email: event.target.value } : current))}
-                    />
-                    <label htmlFor="detail-customer-email">Primary email</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-briefcase" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputText
-                      id="detail-customer-company"
-                      value={selectedCustomer.company ?? ''}
-                      disabled={!isCustomerDetailEditing}
-                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, company: event.target.value } : current))}
-                    />
-                    <label htmlFor="detail-customer-company">Company</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-phone" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputText
-                      id="detail-customer-phone"
-                      value={selectedCustomer.phone ?? ''}
-                      disabled={!isCustomerDetailEditing}
-                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, phone: event.target.value } : current))}
-                    />
-                    <label htmlFor="detail-customer-phone">Phone</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-globe" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputText
-                      id="detail-customer-timezone"
-                      value={selectedCustomer.timezone ?? ''}
-                      disabled={!isCustomerDetailEditing}
-                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, timezone: event.target.value } : current))}
-                    />
-                    <label htmlFor="detail-customer-timezone">Timezone</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-hashtag" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <MultiSelect
-                      id="detail-customer-tags"
-                      value={selectedCustomer.tags}
-                      disabled={!isCustomerDetailEditing}
-                      options={['Enterprise', 'Priority', 'Renewal', 'Support', 'Implementation', 'Finance'].map((tag) => ({ label: tag, value: tag }))}
-                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, tags: event.value as string[] } : current))}
-                      display="chip"
-                      className="full-width"
-                    />
-                    <label htmlFor="detail-customer-tags">Tags</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup">
-                  <span className="p-inputgroup-addon">
-                    <Boxes size={16} />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <MultiSelect
-                      id="detail-customer-projects"
-                      value={selectedCustomer.project_ids}
-                      disabled={!isCustomerDetailEditing}
-                      options={projects.map((project) => ({ label: project.name, value: project.id }))}
-                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, project_ids: event.value as string[] } : current))}
-                      display="chip"
-                      className="full-width"
-                    />
-                    <label htmlFor="detail-customer-projects">Linked projects</label>
-                  </FloatLabel>
-                </div>
-
-                <div className="p-inputgroup project-textarea-row">
-                  <span className="p-inputgroup-addon">
-                    <i className="pi pi-align-left" />
-                  </span>
-                  <FloatLabel className="user-float-field">
-                    <InputTextarea
-                      id="detail-customer-notes"
-                      value={selectedCustomer.notes ?? ''}
-                      disabled={!isCustomerDetailEditing}
-                      onChange={(event) => setSelectedCustomer((current) => (current ? { ...current, notes: event.target.value } : current))}
-                      rows={4}
-                      autoResize
-                    />
-                    <label htmlFor="detail-customer-notes">Notes</label>
-                  </FloatLabel>
-                </div>
-              </div>
-
-              <div className="customer-contacts-block">
-                <div className="customer-contacts-header">
-                  <h4>Contact Members</h4>
-                  {isCustomerDetailEditing ? <Button type="button" label="Add Contact" text onClick={() => addCustomerContactRow('detail')} /> : null}
-                </div>
-                {selectedCustomer.contacts.map((contact, index) => (
-                  <div key={`detail-contact-${index}`} className="customer-contact-row">
-                    <InputText value={contact.name} placeholder="Name" disabled={!isCustomerDetailEditing} onChange={(event) => updateCustomerContactRow(index, 'name', event.target.value, 'detail')} />
-                    <InputText value={contact.role ?? ''} placeholder="Role" disabled={!isCustomerDetailEditing} onChange={(event) => updateCustomerContactRow(index, 'role', event.target.value, 'detail')} />
-                    <InputText value={contact.email ?? ''} placeholder="Email" disabled={!isCustomerDetailEditing} onChange={(event) => updateCustomerContactRow(index, 'email', event.target.value, 'detail')} />
-                    <InputText value={contact.phone ?? ''} placeholder="Phone" disabled={!isCustomerDetailEditing} onChange={(event) => updateCustomerContactRow(index, 'phone', event.target.value, 'detail')} />
-                    {isCustomerDetailEditing ? <Button type="button" icon="pi pi-trash" text onClick={() => removeCustomerContactRow(index, 'detail')} /> : null}
-                  </div>
-                ))}
-              </div>
-
-              {customerFormError ? <small className="error-text">{customerFormError}</small> : null}
-
-              <div className="dialog-actions project-detail-actions">
-                {!isCustomerDetailEditing ? (
-                  <Button type="button" icon="pi pi-pencil" label="Edit" text onClick={() => setIsCustomerDetailEditing(true)} />
-                ) : (
-                  <Button type="button" icon="pi pi-times" label="Cancel Edit" text onClick={cancelCustomerDetailEditing} />
-                )}
-                <Button
-                  type="button"
-                  label="Close"
-                  text
-                  onClick={() => {
-                    cancelCustomerDetailEditing();
-                    setIsCustomerDetailOpen(false);
-                  }}
-                />
-                {isCustomerDetailEditing ? (
-                  <Button type="button" label={isSavingCustomer ? 'Saving...' : 'Save Customer'} loading={isSavingCustomer} onClick={() => void handleUpdateCustomer()} />
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-        </Dialog>
-      </motion.article>
+      <CustomerManagementSection
+        viewKey={`${selectedPage.id}-${currentModule}`}
+        isCustomerDialogOpen={isCustomerDialogOpen}
+        customerSearch={customerSearch}
+        onCustomerSearchChange={setCustomerSearch}
+        onOpenCreateCustomerDialog={openCreateCustomerDialog}
+        customerError={customerError}
+        filteredCustomers={filteredCustomers}
+        isCustomersLoading={isCustomersLoading}
+        projects={projects}
+        onOpenCustomerDetailDialog={openCustomerDetailDialog}
+        customerForm={customerForm}
+        setCustomerForm={setCustomerForm}
+        onCloseCreateCustomerDialog={() => setIsCustomerDialogOpen(false)}
+        addCustomerContactRow={addCustomerContactRow}
+        updateCustomerContactRow={updateCustomerContactRow}
+        removeCustomerContactRow={removeCustomerContactRow}
+        customerFormError={customerFormError}
+        isSavingCustomer={isSavingCustomer}
+        handleCreateCustomer={handleCreateCustomer}
+        isCustomerDetailOpen={isCustomerDetailOpen}
+        selectedCustomer={selectedCustomer}
+        isCustomerDetailEditing={isCustomerDetailEditing}
+        setIsCustomerDetailEditing={setIsCustomerDetailEditing}
+        setSelectedCustomer={setSelectedCustomer}
+        cancelCustomerDetailEditing={cancelCustomerDetailEditing}
+        handleUpdateCustomer={handleUpdateCustomer}
+        setIsCustomerDetailOpen={setIsCustomerDetailOpen}
+      />
     );
   }
 
@@ -2061,71 +1126,57 @@ function App() {
     );
   }
 
+  function renderActivePageContent() {
+    if (selectedPage.id === 'projects') {
+      return (
+        <ProjectsPage
+          activeModule={currentModule}
+          viewContent={renderProjectManagement()}
+          userManagementContent={renderUserManagement()}
+          fallbackContent={renderDefaultContent()}
+        />
+      );
+    }
+
+    if (selectedPage.id === 'knowledgeBase') {
+      return (
+        <KnowledgeBasePage
+          activeModule={currentModule}
+          configurationContent={renderTicketConfiguration()}
+          articlesContent={renderDefaultContent()}
+          customersContent={renderCustomerManagement()}
+          fallbackContent={renderDefaultContent()}
+        />
+      );
+    }
+
+    if (selectedPage.id === 'calendar') {
+      return (
+        <CalendarPage
+          activeModule={currentModule}
+          calendarContent={renderCalendarWorkspace()}
+          tableContent={renderCalendarEventsTable()}
+          fallbackContent={renderDefaultContent()}
+        />
+      );
+    }
+
+    return renderDefaultContent();
+  }
+
   return (
     <div className="app-root">
       <AnimatePresence mode="wait">
         {!isAuthenticated ? (
-          <motion.main
-            key="login"
-            className="login-layout"
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.4 }}
-          >
-            <section className="login-showcase">
-              <div className="glow-orb orb-one" />
-              <div className="glow-orb orb-two" />
-              <div className="showcase-content">
-                <span className="badge">FlowDesk Workspace</span>
-                <h1>Collaborate, organize, and deliver with clarity.</h1>
-                <p>
-                  A modern dashboard experience for admins, team leads, and members to manage projects, knowledge, and
-                  calendars in one place.
-                </p>
-                <div className="showcase-cards">
-                  <article>
-                    <LayoutDashboard size={18} />
-                    <span>Role based layouts</span>
-                  </article>
-                  <article>
-                    <ShieldCheck size={18} />
-                    <span>Secure employee sign in</span>
-                  </article>
-                  <article>
-                    <Users size={18} />
-                    <span>Built for team workflows</span>
-                  </article>
-                </div>
-              </div>
-            </section>
-
-            <section className="login-panel">
-              <motion.form className="login-form" onSubmit={handleLogin} layout>
-                <h2>Welcome back</h2>
-                <p>Sign in with your employee credentials.</p>
-                <label htmlFor="employeeId">Employee ID</label>
-                <input
-                  id="employeeId"
-                  placeholder="Enter your employee ID"
-                  value={employeeId}
-                  onChange={(event) => setEmployeeId(event.target.value)}
-                />
-                <label htmlFor="password">Password</label>
-                <input
-                  id="password"
-                  type="password"
-                  placeholder="Enter password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-                {loginError ? <small className="error-text">{loginError}</small> : null}
-                <button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? 'Signing in...' : 'Sign in'}
-                </button>
-              </motion.form>
-            </section>
-          </motion.main>
+          <LoginPage
+            employeeId={employeeId}
+            password={password}
+            loginError={loginError}
+            isSubmitting={isSubmitting}
+            onSubmit={handleLogin}
+            onEmployeeIdChange={setEmployeeId}
+            onPasswordChange={setPassword}
+          />
         ) : (
           <motion.main
             key="dashboard"
@@ -2135,89 +1186,50 @@ function App() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.35 }}
           >
-            <header className="top-header">
-              <div className="header-left">
-                <div className="header-brand">
-                  <div className="brand-mark">FD</div>
-                  <div className="title-wrap">
-                    <h2>FlowDesk</h2>
-                  </div>
-                </div>
-                <nav className="top-nav">
-                  {topNav.map((page) => (
-                    <button
-                      key={page.id}
-                      className={page.id === selectedPage.id ? 'active' : ''}
-                      onClick={() => selectPage(page)}
-                      type="button"
-                    >
-                      {page.icon}
-                      {page.label}
-                    </button>
-                  ))}
-                </nav>
-              </div>
-              <div className="header-actions">
-                <div className="user-chip">
-                  <span className="user-avatar">{currentUserAvatar}</span>
-                  <div className="user-meta">
-                    <strong>{currentUserName}</strong>
-                    <span className="user-submeta">
-                      <small>{roleLabels[role]}</small>
-                      <small>{currentUserIdentifier}</small>
-                    </span>
-                  </div>
-                </div>
-                <button className="logout-btn" onClick={logout} type="button">
-                  <LogOut size={16} />
-                  Logout
-                </button>
-              </div>
-            </header>
+            <TopHeader
+              topNav={topNav}
+              selectedPageId={selectedPage.id}
+              onSelectPage={(pageId) => {
+                const page = topNav.find((item) => item.id === pageId);
+                if (page) {
+                  selectPage(page);
+                }
+              }}
+              currentUserAvatar={currentUserAvatar}
+              currentUserName={currentUserName}
+              currentUserRoleLabel={roleLabels[role]}
+              currentUserIdentifier={currentUserIdentifier}
+              onLogout={logout}
+            />
 
             <section className="dashboard-body">
-              <aside className="sidebar">
-                <h4>{selectedPage.label} Modules</h4>
-                {selectedPage.modules.map((module) => (
-                  <button
-                    key={module}
-                    type="button"
-                    className={module === activeModule ? 'active' : ''}
-                    onClick={() => setActiveModule(module)}
-                  >
-                    {module}
-                  </button>
-                ))}
-              </aside>
+              <ModuleSidebar
+                pageLabel={selectedPage.label}
+                modules={selectedPage.modules}
+                activeModule={activeModule}
+                onSelectModule={setActiveModule}
+              />
               <section className="content-panel">
-                <div className="search-card">
-                  <Search size={16} />
-                  <input
-                    placeholder={
-                      isUserManagementView
-                        ? 'Search users by name, email, ID, or role...'
-                        : isCustomerView
-                          ? 'Search customers by name, company, email, or tags...'
+                <GlobalSearchBar
+                  placeholder={
+                    isUserManagementView
+                      ? 'Search users by name, email, ID, or role...'
+                      : isCustomerView
+                        ? 'Search customers by name, company, email, or tags...'
+                        : isConfigurationView
+                          ? 'Search ticket configuration…'
                           : 'Search projects, articles, events...'
+                  }
+                  value={isUserManagementView ? userSearch : isCustomerView ? customerSearch : ''}
+                  onChange={(value) => {
+                    if (isUserManagementView) {
+                      setUserSearch(value);
+                    } else if (isCustomerView) {
+                      setCustomerSearch(value);
                     }
-                    value={isUserManagementView ? userSearch : isCustomerView ? customerSearch : ''}
-                    onChange={(event) => {
-                      if (isUserManagementView) {
-                        setUserSearch(event.target.value);
-                      } else if (isCustomerView) {
-                        setCustomerSearch(event.target.value);
-                      }
-                    }}
-                  />
-                  <Settings size={16} />
-                </div>
-                {isUserManagementView
-                  ? renderUserManagement()
-                  : isProjectView
-                    ? renderProjectManagement()
-                    : isCustomerView
-                      ? renderCustomerManagement()
-                      : renderDefaultContent()}
+                  }}
+                />
+                {renderActivePageContent()}
               </section>
             </section>
           </motion.main>

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy import Enum as SAEnum
@@ -87,6 +87,17 @@ class Ticket(Base, TimestampMixin):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class TicketConfiguration(Base, TimestampMixin):
+    """Maps each ticket type (built-in enum slug or custom slug) to a short code prefix (e.g. SR)."""
+
+    __tablename__ = "ticket_configuration"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_type: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+
+
 class TicketComment(Base, TimestampMixin):
     __tablename__ = "ticket_comments"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -162,6 +173,8 @@ class Approval(Base):
 
 
 class Event(Base):
+    """Project-scoped calendar event with optional milestones and progress tracking."""
+
     __tablename__ = "events"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True)
@@ -171,7 +184,33 @@ class Event(Base):
     event_type: Mapped[str] = mapped_column(String(60), nullable=False)
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="planning", nullable=False)
+    progress_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    project: Mapped["Project | None"] = relationship("Project", foreign_keys=[project_id])
+    milestones: Mapped[list["EventMilestone"]] = relationship(
+        "EventMilestone",
+        back_populates="event",
+        cascade="all, delete-orphan",
+    )
+
+
+class EventMilestone(Base):
+    __tablename__ = "event_milestones"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+    event: Mapped["Event"] = relationship("Event", back_populates="milestones")
 
 
 class Task(Base):

@@ -3,8 +3,9 @@ import logging
 from fastapi import FastAPI
 
 from app.core.config import settings
+from app.core.db_migrations import apply_event_migrations, apply_ticket_configuration_migrations
 from app.core.database import Base, SessionLocal, engine
-from app.routes import auth, customers, events_tasks, kb, projects, tickets, users
+from app.routes import auth, customers, events_tasks, kb, projects, ticket_configuration, tickets, users
 from app.services.auth_service import ensure_default_admin
 
 logging.basicConfig(level=settings.log_level)
@@ -16,6 +17,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(projects.router)
 app.include_router(customers.router)
+app.include_router(ticket_configuration.router)
 app.include_router(tickets.router)
 app.include_router(kb.router)
 app.include_router(events_tasks.router)
@@ -30,6 +32,8 @@ def health():
 def startup() -> None:
     logger.info("Ensuring database connectivity and creating tables")
     Base.metadata.create_all(bind=engine)
+    apply_ticket_configuration_migrations(engine)
+    apply_event_migrations(engine)
     with SessionLocal() as db:
         ensure_default_admin(db)
     logger.info("Startup checks complete")

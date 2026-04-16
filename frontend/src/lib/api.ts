@@ -93,7 +93,23 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null);
-    throw new Error(errorBody?.detail ?? 'Request failed');
+    const detail = errorBody?.detail;
+    if (Array.isArray(detail)) {
+      const message = detail
+        .map((issue) => {
+          if (issue && typeof issue === 'object') {
+            const path = Array.isArray(issue.loc) ? issue.loc.join('.') : 'request';
+            return `${path}: ${issue.msg ?? 'invalid value'}`;
+          }
+          return String(issue);
+        })
+        .join(' | ');
+      throw new Error(message || 'Request failed');
+    }
+    if (typeof detail === 'string') {
+      throw new Error(detail);
+    }
+    throw new Error('Request failed');
   }
 
   if (response.status === 204) {
@@ -219,4 +235,147 @@ export async function updateCustomerRequest(customerId: string, payload: Custome
   });
 
   return parseResponse<CustomerRecord>(response);
+}
+
+export type TicketTypeValue =
+  | 'bug_fix'
+  | 'feature_request'
+  | 'service_request'
+  | 'design_rework'
+  | 'performance_issue'
+  | 'security_vulnerability'
+  | 'documentation';
+
+export type TicketConfigurationRecord = {
+  id: string;
+  ticket_type: string;
+  display_name: string | null;
+  code: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TicketConfigurationCreatePayload = {
+  ticket_type: string;
+  code: string;
+  display_name?: string | null;
+};
+
+export type TicketConfigurationUpdatePayload = {
+  code: string;
+  display_name?: string | null;
+};
+
+export async function getTicketConfigurationRequest(): Promise<TicketConfigurationRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/ticket-configuration`, {
+    headers: getAuthHeaders(),
+  });
+
+  return parseResponse<TicketConfigurationRecord[]>(response);
+}
+
+export async function createTicketConfigurationRequest(payload: TicketConfigurationCreatePayload): Promise<TicketConfigurationRecord> {
+  const response = await fetch(`${API_BASE_URL}/ticket-configuration`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  return parseResponse<TicketConfigurationRecord>(response);
+}
+
+export async function updateTicketConfigurationRequest(
+  configId: string,
+  payload: TicketConfigurationUpdatePayload,
+): Promise<TicketConfigurationRecord> {
+  const response = await fetch(`${API_BASE_URL}/ticket-configuration/${configId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  return parseResponse<TicketConfigurationRecord>(response);
+}
+
+export async function deleteTicketConfigurationRequest(configId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/ticket-configuration/${configId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+
+  return parseResponse<void>(response);
+}
+
+export type EventMilestoneRecord = {
+  id: string;
+  title: string;
+  target_date: string | null;
+  completed_at: string | null;
+  sort_order: number;
+};
+
+export type CalendarEventRecord = {
+  id: string;
+  project_id: string | null;
+  project_name: string | null;
+  created_by: string;
+  title: string;
+  description: string | null;
+  event_type: string;
+  start_at: string;
+  end_at: string | null;
+  status: string;
+  progress_percent: number | null;
+  created_at: string;
+  updated_at: string;
+  milestones: EventMilestoneRecord[];
+};
+
+export type CalendarEventCreatePayload = {
+  project_id: string;
+  title: string;
+  description?: string | null;
+  event_type: string;
+  start_at: string;
+  end_at?: string | null;
+  status: string;
+  progress_percent?: number | null;
+  milestones: { title: string; target_date?: string | null; sort_order: number }[];
+};
+
+export async function getEventsRequest(range?: { from: string; to: string }): Promise<CalendarEventRecord[]> {
+  const search = new URLSearchParams();
+  if (range?.from) {
+    search.set('from', range.from);
+  }
+  if (range?.to) {
+    search.set('to', range.to);
+  }
+  const query = search.toString();
+  const response = await fetch(`${API_BASE_URL}/work/events${query ? `?${query}` : ''}`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<CalendarEventRecord[]>(response);
+}
+
+export async function createCalendarEventRequest(payload: CalendarEventCreatePayload): Promise<CalendarEventRecord> {
+  const response = await fetch(`${API_BASE_URL}/work/events`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<CalendarEventRecord>(response);
+}
+
+export async function patchEventMilestoneRequest(
+  eventId: string,
+  milestoneId: string,
+  completed: boolean,
+): Promise<CalendarEventRecord> {
+  const response = await fetch(`${API_BASE_URL}/work/events/${eventId}/milestones/${milestoneId}`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ completed }),
+  });
+  return parseResponse<CalendarEventRecord>(response);
 }

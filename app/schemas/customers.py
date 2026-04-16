@@ -1,19 +1,19 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 
 class CustomerContact(BaseModel):
     name: str
     role: str | None = None
-    email: EmailStr | None = None
+    email: str | None = None
     phone: str | None = None
 
 
 class CustomerCreate(BaseModel):
     name: str
-    email: EmailStr
+    email: str
     company: str | None = None
     phone: str | None = None
     timezone: str | None = None
@@ -25,7 +25,7 @@ class CustomerCreate(BaseModel):
 
 class CustomerUpdate(BaseModel):
     name: str
-    email: EmailStr
+    email: str
     company: str | None = None
     phone: str | None = None
     timezone: str | None = None
@@ -38,7 +38,7 @@ class CustomerUpdate(BaseModel):
 class CustomerResponse(BaseModel):
     id: UUID
     name: str
-    email: EmailStr
+    email: str
     company: str | None
     phone: str | None
     timezone: str | None
