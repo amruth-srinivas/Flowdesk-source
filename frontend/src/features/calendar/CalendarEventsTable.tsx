@@ -1,8 +1,12 @@
 import { motion } from 'framer-motion';
+import { Button } from 'primereact/button';
 import { Column } from 'primereact/column';
 import { DataTable } from 'primereact/datatable';
+import { Dialog } from 'primereact/dialog';
 import { Tag } from 'primereact/tag';
-import type { CalendarEventRecord } from '../../lib/api';
+import { useState } from 'react';
+import type { CalendarEventRecord, ProjectRecord } from '../../lib/api';
+import { CalendarEventForm } from './CalendarEventForm';
 
 function humanizeType(value: string): string {
   return value.replace(/_/g, ' ');
@@ -41,9 +45,21 @@ type CalendarEventsTableProps = {
   viewKey: string;
   rows: CalendarEventRecord[];
   isLoading: boolean;
+  isAdmin: boolean;
+  projects: ProjectRecord[];
+  onActivitySaved: () => void;
 };
 
-export function CalendarEventsTable({ viewKey, rows, isLoading }: CalendarEventsTableProps) {
+export function CalendarEventsTable({
+  viewKey,
+  rows,
+  isLoading,
+  isAdmin,
+  projects,
+  onActivitySaved,
+}: CalendarEventsTableProps) {
+  const [activityToEdit, setActivityToEdit] = useState<CalendarEventRecord | null>(null);
+
   return (
     <motion.article
       key={viewKey}
@@ -131,8 +147,59 @@ export function CalendarEventsTable({ viewKey, rows, isLoading }: CalendarEvents
             alignHeader="center"
             body={(row: CalendarEventRecord) => row.milestones.length}
           />
+          {isAdmin ? (
+            <Column
+              header="Actions"
+              align="center"
+              alignHeader="center"
+              style={{ width: '100px' }}
+              body={(row: CalendarEventRecord) => (
+                <Button
+                  type="button"
+                  icon="pi pi-pencil"
+                  rounded
+                  text
+                  severity="secondary"
+                  aria-label={`Edit ${row.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setActivityToEdit(row);
+                  }}
+                />
+              )}
+            />
+          ) : null}
         </DataTable>
       </div>
+
+      {isAdmin ? (
+        <Dialog
+          header="Edit activity"
+          visible={activityToEdit !== null}
+          onHide={() => setActivityToEdit(null)}
+          className="project-dialog calendar-add-dialog"
+          style={{ width: 'min(94vw, 640px)' }}
+          modal
+          dismissableMask
+          draggable={false}
+        >
+          {activityToEdit ? (
+            <CalendarEventForm
+              key={activityToEdit.id}
+              viewKey={`${viewKey}-edit-${activityToEdit.id}`}
+              projects={projects}
+              variant="dialog"
+              mode="edit"
+              eventId={activityToEdit.id}
+              initialEvent={activityToEdit}
+              onCreated={() => {
+                onActivitySaved();
+                setActivityToEdit(null);
+              }}
+            />
+          ) : null}
+        </Dialog>
+      ) : null}
     </motion.article>
   );
 }

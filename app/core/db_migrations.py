@@ -122,3 +122,81 @@ def apply_event_migrations(engine: Engine) -> None:
                     conn.execute(text("UPDATE events SET updated_at = created_at WHERE updated_at IS NULL"))
     except Exception as exc:
         logger.warning("Event column migration failed: %s", exc)
+
+
+def apply_customer_migrations(engine: Engine) -> None:
+    """Add contacts and project_ids to customers when DB predates those columns (create_all does not alter tables)."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for customer migrations: %s", exc)
+        return
+
+    if "customers" not in tables:
+        return
+
+    dialect = engine.dialect.name
+    columns = {col["name"] for col in inspector.get_columns("customers")}
+
+    try:
+        with engine.begin() as conn:
+            if "contacts" not in columns:
+                logger.info("Adding customers.contacts column")
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE customers ADD COLUMN IF NOT EXISTS contacts JSON NOT NULL DEFAULT '[]'::json"
+                        )
+                    )
+                else:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE customers ADD COLUMN contacts JSON NOT NULL DEFAULT '[]'"
+                        )
+                    )
+
+            if "project_ids" not in columns:
+                logger.info("Adding customers.project_ids column")
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE customers ADD COLUMN IF NOT EXISTS project_ids UUID[] NOT NULL DEFAULT '{}'::uuid[]"
+                        )
+                    )
+                else:
+                    logger.warning(
+                        "Skipping customers.project_ids on non-PostgreSQL dialect; use a compatible database."
+                    )
+    except Exception as exc:
+        logger.warning("Customer column migration failed: %s", exc)
+
+
+def apply_ticket_public_reference_migration(engine: Engine) -> None:
+    """Add tickets.public_reference for SR0001-style ids per project + type."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for ticket migrations: %s", exc)
+        return
+
+    if "tickets" not in tables:
+        return
+
+    dialect = engine.dialect.name
+    columns = {col["name"] for col in inspector.get_columns("tickets")}
+
+    try:
+        with engine.begin() as conn:
+            if "public_reference" not in columns:
+                logger.info("Adding tickets.public_reference column")
+                if dialect == "postgresql":
+                    conn.execute(text("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS public_reference VARCHAR(48)"))
+                    conn.execute(
+                        text("CREATE INDEX IF NOT EXISTS ix_tickets_public_reference ON tickets (public_reference)")
+                    )
+                else:
+                    conn.execute(text("ALTER TABLE tickets ADD COLUMN public_reference VARCHAR(48)"))
+    except Exception as exc:
+        logger.warning("Ticket public_reference migration failed: %s", exc)

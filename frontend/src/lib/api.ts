@@ -151,6 +151,23 @@ export async function getUsersRequest(): Promise<UserRecord[]> {
   return parseResponse<UserRecord[]>(response);
 }
 
+/** Current user profile (includes id for assignment filters). */
+export async function getCurrentUserRequest(): Promise<UserRecord> {
+  const response = await fetch(`${API_BASE_URL}/users/me`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<UserRecord>(response);
+}
+
+/** Active users for ticket assignment (admin + team lead). */
+export async function getAssignableUsersRequest(): Promise<UserRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/users/assignable`, {
+    headers: getAuthHeaders(),
+  });
+
+  return parseResponse<UserRecord[]>(response);
+}
+
 export async function createUserRequest(payload: UserCreatePayload): Promise<UserRecord> {
   const response = await fetch(`${API_BASE_URL}/users`, {
     method: 'POST',
@@ -343,6 +360,19 @@ export type CalendarEventCreatePayload = {
   milestones: { title: string; target_date?: string | null; sort_order: number }[];
 };
 
+/** Full update body; backend treats fields as optional but we send a complete snapshot from the form. */
+export type CalendarEventUpdatePayload = {
+  project_id: string | null;
+  title: string;
+  description: string | null;
+  event_type: string;
+  start_at: string;
+  end_at: string | null;
+  status: string;
+  progress_percent: number | null;
+  milestones: { title: string; target_date?: string | null; sort_order: number }[];
+};
+
 export async function getEventsRequest(range?: { from: string; to: string }): Promise<CalendarEventRecord[]> {
   const search = new URLSearchParams();
   if (range?.from) {
@@ -367,6 +397,18 @@ export async function createCalendarEventRequest(payload: CalendarEventCreatePay
   return parseResponse<CalendarEventRecord>(response);
 }
 
+export async function updateCalendarEventRequest(
+  eventId: string,
+  payload: CalendarEventUpdatePayload,
+): Promise<CalendarEventRecord> {
+  const response = await fetch(`${API_BASE_URL}/work/events/${eventId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<CalendarEventRecord>(response);
+}
+
 export async function patchEventMilestoneRequest(
   eventId: string,
   milestoneId: string,
@@ -378,4 +420,258 @@ export async function patchEventMilestoneRequest(
     body: JSON.stringify({ completed }),
   });
   return parseResponse<CalendarEventRecord>(response);
+}
+
+export type TicketType =
+  | 'bug_fix'
+  | 'feature_request'
+  | 'service_request'
+  | 'design_rework'
+  | 'performance_issue'
+  | 'security_vulnerability'
+  | 'documentation';
+
+export type TicketPriority = 'critical' | 'high' | 'medium' | 'low';
+
+export type TicketStatus = 'open' | 'in_progress' | 'in_review' | 'resolved' | 'closed';
+
+export type TicketRecord = {
+  id: string;
+  ticket_number: number;
+  /** Per-project + type reference from configuration, e.g. SR0001 */
+  public_reference: string | null;
+  title: string;
+  description: string | null;
+  type: TicketType;
+  priority: TicketPriority;
+  status: TicketStatus;
+  project_id: string;
+  created_by: string;
+  created_by_name?: string | null;
+  assignee_id: string | null;
+  assignee_name?: string | null;
+  customer_id: string | null;
+  due_date: string | null;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TicketCreatePayload = {
+  title: string;
+  description?: string | null;
+  type: TicketType;
+  priority: TicketPriority;
+  project_id: string;
+  assigned_to?: string | null;
+  customer_id?: string | null;
+  due_date?: string | null;
+};
+
+export type TicketUpdatePayload = {
+  title?: string;
+  description?: string | null;
+  type?: TicketType;
+  priority?: TicketPriority;
+  project_id?: string;
+  assigned_to?: string | null;
+  customer_id?: string | null;
+  due_date?: string | null;
+};
+
+export async function getTicketsRequest(options?: { assignee_me?: boolean }): Promise<TicketRecord[]> {
+  const search = new URLSearchParams();
+  if (options?.assignee_me) {
+    search.set('assignee_me', 'true');
+  }
+  const q = search.toString();
+  const response = await fetch(`${API_BASE_URL}/tickets${q ? `?${q}` : ''}`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketRecord[]>(response);
+}
+
+export async function getTicketRequest(ticketId: string): Promise<TicketRecord> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketRecord>(response);
+}
+
+export type TicketCommentRecord = {
+  id: string;
+  ticket_id: string;
+  author_id: string;
+  author_name: string;
+  body: string;
+  is_internal: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TicketCommentCreatePayload = {
+  body: string;
+  is_internal?: boolean;
+};
+
+export async function getTicketCommentsRequest(ticketId: string): Promise<TicketCommentRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/comments`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketCommentRecord[]>(response);
+}
+
+export async function postTicketCommentRequest(
+  ticketId: string,
+  payload: TicketCommentCreatePayload,
+): Promise<TicketCommentRecord> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/comments`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<TicketCommentRecord>(response);
+}
+
+export type TicketHistoryRecord = {
+  id: string;
+  changed_by: string;
+  changer_name: string;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+  created_at: string;
+};
+
+export async function getTicketHistoryRequest(ticketId: string): Promise<TicketHistoryRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/history`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketHistoryRecord[]>(response);
+}
+
+export type ResolutionRecord = {
+  id: string;
+  ticket_id: string;
+  resolved_by: string;
+  resolver_name: string;
+  summary: string;
+  root_cause: string | null;
+  steps_taken: string | null;
+  kb_article_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ResolutionUpsertPayload = {
+  summary: string;
+  root_cause?: string | null;
+  steps_taken?: string | null;
+  kb_article_id?: string | null;
+};
+
+export async function getTicketResolutionRequest(ticketId: string): Promise<ResolutionRecord | null> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/resolution`, {
+    headers: getAuthHeaders(),
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  return parseResponse<ResolutionRecord>(response);
+}
+
+export async function putTicketResolutionRequest(ticketId: string, payload: ResolutionUpsertPayload): Promise<ResolutionRecord> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/resolution`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<ResolutionRecord>(response);
+}
+
+export type TicketAttachmentRecord = {
+  id: string;
+  filename: string;
+  file_size_bytes: number;
+  mime_type: string;
+  uploaded_by: string;
+  uploader_name: string;
+  created_at: string;
+};
+
+export async function getTicketAttachmentsRequest(ticketId: string): Promise<TicketAttachmentRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/attachments`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketAttachmentRecord[]>(response);
+}
+
+export async function uploadTicketAttachmentRequest(ticketId: string, file: File): Promise<TicketAttachmentRecord> {
+  const token = localStorage.getItem('accessToken');
+  const body = new FormData();
+  body.append('file', file);
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/attachments`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body,
+  });
+  return parseResponse<TicketAttachmentRecord>(response);
+}
+
+export function ticketAttachmentFileUrl(ticketId: string, attachmentId: string): string {
+  return `${API_BASE_URL}/tickets/${ticketId}/attachments/${attachmentId}/file`;
+}
+
+export async function downloadTicketAttachmentFile(
+  ticketId: string,
+  attachmentId: string,
+  filename: string,
+): Promise<void> {
+  const token = localStorage.getItem('accessToken');
+  const response = await fetch(ticketAttachmentFileUrl(ticketId, attachmentId), {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    const detail = errorBody?.detail;
+    throw new Error(typeof detail === 'string' ? detail : 'Download failed');
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function createTicketRequest(payload: TicketCreatePayload): Promise<TicketRecord> {
+  const response = await fetch(`${API_BASE_URL}/tickets`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<TicketRecord>(response);
+}
+
+export async function updateTicketRequest(ticketId: string, payload: TicketUpdatePayload): Promise<TicketRecord> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<TicketRecord>(response);
+}
+
+export async function patchTicketStatusRequest(ticketId: string, status: TicketStatus): Promise<TicketRecord> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/status`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ status }),
+  });
+  return parseResponse<TicketRecord>(response);
 }

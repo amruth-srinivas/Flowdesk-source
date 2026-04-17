@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.constants.enums import UserRole
 from app.core.database import get_db
 from app.core.security import hash_password
-from app.dependencies.auth import get_current_admin
+from app.dependencies.auth import get_current_admin, get_current_lead, get_current_member
 from app.models import User
 from app.schemas.users import UserCreate, UserPasswordUpdate, UserResponse, UserUpdate, UserUpdateRole
 
@@ -36,6 +36,19 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), _=Depends(ge
 @router.get("", response_model=list[UserResponse])
 def get_users(db: Session = Depends(get_db), _=Depends(get_current_admin)):
     return db.execute(select(User)).scalars().all()
+
+
+@router.get("/me", response_model=UserResponse)
+def get_current_profile(user: User = Depends(get_current_member)):
+    """Current user profile (id for ticket filters and UI)."""
+    return user
+
+
+@router.get("/assignable", response_model=list[UserResponse])
+def list_assignable_users(db: Session = Depends(get_db), _=Depends(get_current_lead)):
+    """Active users for ticket assignment (admin and team lead)."""
+    rows = db.execute(select(User).where(User.is_active.is_(True))).scalars().all()
+    return sorted(rows, key=lambda u: u.name.lower())
 
 
 @router.put("/{user_id}", response_model=UserResponse)

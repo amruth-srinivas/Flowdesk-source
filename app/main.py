@@ -3,7 +3,12 @@ import logging
 from fastapi import FastAPI
 
 from app.core.config import settings
-from app.core.db_migrations import apply_event_migrations, apply_ticket_configuration_migrations
+from app.core.db_migrations import (
+    apply_customer_migrations,
+    apply_event_migrations,
+    apply_ticket_configuration_migrations,
+    apply_ticket_public_reference_migration,
+)
 from app.core.database import Base, SessionLocal, engine
 from app.routes import auth, customers, events_tasks, kb, projects, ticket_configuration, tickets, users
 from app.services.auth_service import ensure_default_admin
@@ -34,6 +39,8 @@ def startup() -> None:
     Base.metadata.create_all(bind=engine)
     apply_ticket_configuration_migrations(engine)
     apply_event_migrations(engine)
+    apply_customer_migrations(engine)
+    apply_ticket_public_reference_migration(engine)
     with SessionLocal() as db:
         ensure_default_admin(db)
     logger.info("Startup checks complete")

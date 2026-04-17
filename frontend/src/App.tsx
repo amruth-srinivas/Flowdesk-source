@@ -14,11 +14,17 @@ import {
   createTicketConfigurationRequest,
   createUserRequest,
   deleteTicketConfigurationRequest,
+  createTicketRequest,
+  getAssignableUsersRequest,
   getCustomersRequest,
   getEventsRequest,
   getProjectsRequest,
   getTicketConfigurationRequest,
+  getCurrentUserRequest,
+  getTicketsRequest,
   getUsersRequest,
+  patchTicketStatusRequest,
+  updateTicketRequest,
   loginRequest,
   type CustomerContact,
   type CustomerRecord,
@@ -26,6 +32,10 @@ import {
   type ProjectStatus,
   type TicketConfigurationCreatePayload,
   type TicketConfigurationRecord,
+  type TicketCreatePayload,
+  type TicketRecord,
+  type TicketStatus,
+  type TicketUpdatePayload,
   updateCustomerRequest,
   updateProjectRequest,
   updateTicketConfigurationRequest,
@@ -41,9 +51,11 @@ import { CustomerManagementSection } from './features/customer-management/Custom
 import { ProjectManagementSection } from './features/project-management/ProjectManagementSection';
 import { CalendarEventsTable } from './features/calendar/CalendarEventsTable';
 import { CalendarWorkspace } from './features/calendar/CalendarWorkspace';
+import { TicketManagementSection } from './features/tickets/TicketManagementSection';
 import { TicketConfigurationSection } from './features/ticket-configuration/TicketConfigurationSection';
 import { UserManagementSection } from './features/user-management/UserManagementSection';
 import { CalendarPage } from './pages/Calendar';
+import { TicketsPage } from './pages/TicketsPage';
 import { KnowledgeBasePage } from './pages/KnowledgeBase';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectsPage } from './pages/Projects';
@@ -73,7 +85,7 @@ const roleTopNav: Record<Role, NavItem[]> = {
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View'] },
   ],
   teamLead: [
-    { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['Open Tickets', 'Assigned', 'Resolved'] },
+    { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['Create Ticket', 'Open Tickets', 'Assigned', 'Resolved'] },
     { id: 'kb', label: 'KB', icon: <BookOpenText size={17} />, modules: ['Search', 'Articles', 'Guidelines'] },
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View'] },
   ],
@@ -237,6 +249,13 @@ function App() {
   const [allCalendarEvents, setAllCalendarEvents] = useState<CalendarEventRecord[]>([]);
   const [isAllCalendarEventsLoading, setIsAllCalendarEventsLoading] = useState(false);
   const calendarRangeRef = useRef<{ from: string; to: string } | null>(null);
+  const [tickets, setTickets] = useState<TicketRecord[]>([]);
+  const [isTicketsLoading, setIsTicketsLoading] = useState(false);
+  const [ticketsError, setTicketsError] = useState('');
+  const [ticketSearch, setTicketSearch] = useState('');
+  const [ticketViewMode, setTicketViewMode] = useState<'list' | 'kanban'>('list');
+  const [assignableUsers, setAssignableUsers] = useState<UserRecord[]>([]);
+  const [sessionProfile, setSessionProfile] = useState<UserRecord | null>(null);
 
   const topNav = roleTopNav[role];
   const selectedPage = useMemo(
@@ -253,6 +272,8 @@ function App() {
   const isUserManagementView = role === 'admin' && selectedPage.id === 'projects' && currentModule === 'User Management';
   const isCustomerView = role === 'admin' && selectedPage.id === 'knowledgeBase' && currentModule === 'Customers';
   const isConfigurationView = role === 'admin' && selectedPage.id === 'knowledgeBase' && currentModule === 'Configuration';
+  const isTicketsView =
+    (role === 'teamLead' || role === 'teamMember') && selectedPage.id === 'tickets';
 
   const filteredUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
@@ -352,6 +373,13 @@ function App() {
     [filteredProjects],
   );
 
+  const leadCurrentUserId = useMemo(
+    () => assignableUsers.find((u) => u.employee_id === employeeId)?.id,
+    [assignableUsers, employeeId],
+  );
+
+  const ticketWorkspaceUserId = sessionProfile?.id ?? leadCurrentUserId;
+
   const loadCalendarEventsForRange = useCallback(async (from: string, to: string) => {
     calendarRangeRef.current = { from, to };
     setIsCalendarEventsLoading(true);
@@ -410,13 +438,27 @@ function App() {
   );
 
   useEffect(() => {
-    if (!isAuthenticated || role !== 'admin') {
+    if (!isAuthenticated) {
       return;
     }
-
-    void loadUsers();
-    void loadProjects();
-    void loadCustomers();
+    if (role === 'admin') {
+      void loadUsers();
+      void loadProjects();
+      void loadCustomers();
+    }
+    if (role === 'teamLead' || role === 'teamMember') {
+      void loadProjects();
+    }
+    if (role === 'teamLead') {
+      void loadCustomers();
+    }
+    if (role === 'teamLead' || role === 'teamMember') {
+      void getCurrentUserRequest()
+        .then(setSessionProfile)
+        .catch(() => setSessionProfile(null));
+    } else {
+      setSessionProfile(null);
+    }
   }, [isAuthenticated, role]);
 
   useEffect(() => {
@@ -435,6 +477,24 @@ function App() {
     }
     void loadAllCalendarEvents();
   }, [isAuthenticated, selectedPage.id, currentModule, loadAllCalendarEvents]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+    if (selectedPage.id !== 'tickets') {
+      return;
+    }
+    if (role === 'teamLead') {
+      void loadTicketsForLead();
+      void loadAssignableUsersForTickets();
+      void loadTicketConfigurationsForLead();
+    }
+    if (role === 'teamMember') {
+      void loadTicketsForMember();
+      void loadTicketConfigurationsForLead();
+    }
+  }, [isAuthenticated, role, selectedPage.id]);
 
   async function loadUsers() {
     setIsUsersLoading(true);
@@ -485,6 +545,64 @@ function App() {
       setIsCustomersLoading(false);
     }
   }
+
+  async function loadTicketsForLead() {
+    setIsTicketsLoading(true);
+    setTicketsError('');
+    try {
+      const data = await getTicketsRequest();
+      setTickets([...data].sort((a, b) => b.ticket_number - a.ticket_number));
+    } catch (error) {
+      setTickets([]);
+      setTicketsError(error instanceof Error ? error.message : 'Unable to load tickets');
+    } finally {
+      setIsTicketsLoading(false);
+    }
+  }
+
+  async function loadTicketsForMember() {
+    setIsTicketsLoading(true);
+    setTicketsError('');
+    try {
+      const data = await getTicketsRequest({ assignee_me: true });
+      setTickets([...data].sort((a, b) => b.ticket_number - a.ticket_number));
+    } catch (error) {
+      setTickets([]);
+      setTicketsError(error instanceof Error ? error.message : 'Unable to load tickets');
+    } finally {
+      setIsTicketsLoading(false);
+    }
+  }
+
+  async function loadAssignableUsersForTickets() {
+    try {
+      const data = await getAssignableUsersRequest();
+      setAssignableUsers([...data].sort((a, b) => a.name.localeCompare(b.name)));
+    } catch {
+      setAssignableUsers([]);
+    }
+  }
+
+  async function loadTicketConfigurationsForLead() {
+    try {
+      const data = await getTicketConfigurationRequest();
+      setTicketConfigurations([...data].sort((a, b) => a.ticket_type.localeCompare(b.ticket_type)));
+    } catch {
+      setTicketConfigurations([]);
+    }
+  }
+
+  const handleLeadCreateTicket = useCallback(async (payload: TicketCreatePayload) => {
+    return createTicketRequest(payload);
+  }, []);
+
+  const handleLeadUpdateTicket = useCallback(async (id: string, payload: TicketUpdatePayload) => {
+    return updateTicketRequest(id, payload);
+  }, []);
+
+  const handleLeadPatchTicketStatus = useCallback(async (id: string, status: TicketStatus) => {
+    return patchTicketStatusRequest(id, status);
+  }, []);
 
   async function loadTicketConfigurations() {
     setIsTicketConfigLoading(true);
@@ -559,6 +677,7 @@ function App() {
     setEmployeeId('');
     setActiveModule('');
     setLoginError('');
+    setSessionProfile(null);
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('role');
@@ -1070,6 +1189,38 @@ function App() {
         viewKey={`${selectedPage.id}-${currentModule}`}
         rows={allCalendarEvents}
         isLoading={isAllCalendarEventsLoading}
+        isAdmin={role === 'admin'}
+        projects={projects}
+        onActivitySaved={refreshCalendarEvents}
+      />
+    );
+  }
+
+  function renderTicketManagement() {
+    const isLead = role === 'teamLead';
+    const isLeadCreateModule = isLead && currentModule === 'Create Ticket';
+    return (
+      <TicketManagementSection
+        viewKey={`${selectedPage.id}-${currentModule}`}
+        ticketModule={currentModule}
+        search={ticketSearch}
+        viewMode={ticketViewMode}
+        onViewModeChange={setTicketViewMode}
+        tickets={tickets}
+        isLoading={isTicketsLoading}
+        error={ticketsError}
+        projects={projects}
+        customers={customers}
+        assignableUsers={assignableUsers}
+        ticketConfigurations={ticketConfigurations}
+        currentUserId={ticketWorkspaceUserId}
+        onRefresh={() => void (isLead ? loadTicketsForLead() : loadTicketsForMember())}
+        onCreateTicket={handleLeadCreateTicket}
+        onUpdateTicket={handleLeadUpdateTicket}
+        onPatchStatus={handleLeadPatchTicketStatus}
+        ticketRole={isLead ? 'lead' : 'member'}
+        canCreateTickets={isLeadCreateModule}
+        canEditTickets={isLead}
       />
     );
   }
@@ -1161,6 +1312,13 @@ function App() {
       );
     }
 
+    if (selectedPage.id === 'tickets') {
+      if (role === 'teamLead' || role === 'teamMember') {
+        return <TicketsPage content={renderTicketManagement()} />;
+      }
+      return renderDefaultContent();
+    }
+
     return renderDefaultContent();
   }
 
@@ -1218,14 +1376,18 @@ function App() {
                         ? 'Search customers by name, company, email, or tags...'
                         : isConfigurationView
                           ? 'Search ticket configuration…'
-                          : 'Search projects, articles, events...'
+                          : isTicketsView
+                            ? 'Search tickets by title, number, project, or assignee...'
+                            : 'Search projects, articles, events...'
                   }
-                  value={isUserManagementView ? userSearch : isCustomerView ? customerSearch : ''}
+                  value={isUserManagementView ? userSearch : isCustomerView ? customerSearch : isTicketsView ? ticketSearch : ''}
                   onChange={(value) => {
                     if (isUserManagementView) {
                       setUserSearch(value);
                     } else if (isCustomerView) {
                       setCustomerSearch(value);
+                    } else if (isTicketsView) {
+                      setTicketSearch(value);
                     }
                   }}
                 />

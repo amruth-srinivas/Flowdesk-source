@@ -85,6 +85,8 @@ class Ticket(Base, TimestampMixin):
     customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=True)
     due_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Human-readable id per project + type, e.g. SR0001 (from ticket_configuration code + sequence).
+    public_reference: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
 
 
 class TicketConfiguration(Base, TimestampMixin):

@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.constants.enums import UserRole
 from app.core.database import get_db
-from app.dependencies.auth import get_current_admin
-from app.models import Project, ProjectMember
+from app.dependencies.auth import get_current_admin, get_current_member
+from app.models import Project, ProjectMember, User
+from app.utils.access import accessible_project_ids
 from app.schemas.projects import ProjectCreate, ProjectResponse, ProjectUpdate
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -53,8 +55,14 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db), admin=
 
 
 @router.get("", response_model=list[ProjectResponse])
-def list_projects(db: Session = Depends(get_db), _=Depends(get_current_admin)):
-    projects = db.execute(select(Project)).scalars().all()
+def list_projects(db: Session = Depends(get_db), user: User = Depends(get_current_member)):
+    if user.role == UserRole.ADMIN:
+        projects = db.execute(select(Project)).scalars().all()
+    else:
+        ids = accessible_project_ids(db, user)
+        if not ids:
+            return []
+        projects = db.execute(select(Project).where(Project.id.in_(ids))).scalars().all()
     return [_serialize_project(project, db) for project in projects]
 
 

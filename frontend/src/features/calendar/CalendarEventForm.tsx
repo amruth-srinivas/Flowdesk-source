@@ -6,9 +6,9 @@ import { InputText } from 'primereact/inputtext';
 import { InputTextarea } from 'primereact/inputtextarea';
 import { Checkbox } from 'primereact/checkbox';
 import { Slider } from 'primereact/slider';
-import { useMemo, useState } from 'react';
-import type { ProjectRecord } from '../../lib/api';
-import { createCalendarEventRequest } from '../../lib/api';
+import { useEffect, useMemo, useState } from 'react';
+import type { CalendarEventRecord, ProjectRecord } from '../../lib/api';
+import { createCalendarEventRequest, updateCalendarEventRequest } from '../../lib/api';
 
 const EVENT_TYPES = [
   { label: 'Meeting', value: 'meeting' },
@@ -33,15 +33,36 @@ function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function parseYmdLocal(ymd: string): Date {
+  const [y, mo, d] = ymd.split('-').map((part) => Number(part));
+  if (!y || !mo || !d) {
+    return new Date(ymd);
+  }
+  return new Date(y, mo - 1, d, 12, 0, 0, 0);
+}
+
 type CalendarEventFormProps = {
   viewKey: string;
   projects: ProjectRecord[];
   onCreated: () => void;
   /** Use inside Dialog: no outer card / title (dialog supplies header). */
   variant?: 'page' | 'dialog';
+  mode?: 'create' | 'edit';
+  /** Required when mode is edit (PUT /work/events/{id}). */
+  eventId?: string;
+  /** When mode is edit, used to populate fields. */
+  initialEvent?: CalendarEventRecord | null;
 };
 
-export function CalendarEventForm({ viewKey, projects, onCreated, variant = 'page' }: CalendarEventFormProps) {
+export function CalendarEventForm({
+  viewKey,
+  projects,
+  onCreated,
+  variant = 'page',
+  mode = 'create',
+  eventId,
+  initialEvent,
+}: CalendarEventFormProps) {
   const [projectId, setProjectId] = useState<string | null>(projects[0]?.id ?? null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -63,6 +84,31 @@ export function CalendarEventForm({ viewKey, projects, onCreated, variant = 'pag
     () => projects.map((p) => ({ label: p.name, value: p.id })),
     [projects],
   );
+
+  useEffect(() => {
+    if (mode !== 'edit' || !initialEvent) {
+      return;
+    }
+    setProjectId(initialEvent.project_id ?? projects[0]?.id ?? null);
+    setTitle(initialEvent.title);
+    setDescription(initialEvent.description ?? '');
+    setEventType(initialEvent.event_type);
+    setStatus(initialEvent.status);
+    setStartAt(new Date(initialEvent.start_at));
+    setEndAt(initialEvent.end_at ? new Date(initialEvent.end_at) : null);
+    const p = initialEvent.progress_percent;
+    const hasProgress = p !== null && p !== undefined;
+    setTrackProgress(hasProgress);
+    setProgress(hasProgress && typeof p === 'number' ? p : 35);
+    setMilestones(
+      initialEvent.milestones.map((m) => ({
+        id: m.id,
+        title: m.title,
+        targetDate: m.target_date ? parseYmdLocal(m.target_date) : null,
+      })),
+    );
+    setError('');
+  }, [mode, initialEvent]);
 
   function addMilestone() {
     setMilestones((prev) => [...prev, { id: crypto.randomUUID(), title: '', targetDate: null }]);
@@ -91,31 +137,50 @@ export function CalendarEventForm({ viewKey, projects, onCreated, variant = 'pag
     }
     setSaving(true);
     setError('');
+    const milestonePayload = milestones
+      .filter((m) => m.title.trim())
+      .map((m, i) => ({
+        title: m.title.trim(),
+        target_date: m.targetDate ? ymd(m.targetDate) : null,
+        sort_order: i,
+      }));
     try {
-      await createCalendarEventRequest({
-        project_id: projectId,
-        title: title.trim(),
-        description: description.trim() || null,
-        event_type: eventType,
-        start_at: startAt.toISOString(),
-        end_at: endAt ? endAt.toISOString() : null,
-        status,
-        progress_percent: trackProgress ? Math.round(progress) : null,
-        milestones: milestones
-          .filter((m) => m.title.trim())
-          .map((m, i) => ({
-            title: m.title.trim(),
-            target_date: m.targetDate ? ymd(m.targetDate) : null,
-            sort_order: i,
-          })),
-      });
+      if (mode === 'edit') {
+        if (!eventId) {
+          setError('Missing event id.');
+          return;
+        }
+        await updateCalendarEventRequest(eventId, {
+          project_id: projectId,
+          title: title.trim(),
+          description: description.trim() || null,
+          event_type: eventType,
+          start_at: startAt.toISOString(),
+          end_at: endAt ? endAt.toISOString() : null,
+          status,
+          progress_percent: trackProgress ? Math.round(progress) : null,
+          milestones: milestonePayload,
+        });
+      } else {
+        await createCalendarEventRequest({
+          project_id: projectId,
+          title: title.trim(),
+          description: description.trim() || null,
+          event_type: eventType,
+          start_at: startAt.toISOString(),
+          end_at: endAt ? endAt.toISOString() : null,
+          status,
+          progress_percent: trackProgress ? Math.round(progress) : null,
+          milestones: milestonePayload,
+        });
+        setTitle('');
+        setDescription('');
+        setMilestones([]);
+        setTrackProgress(false);
+      }
       onCreated();
-      setTitle('');
-      setDescription('');
-      setMilestones([]);
-      setTrackProgress(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not create event');
+      setError(e instanceof Error ? e.message : mode === 'edit' ? 'Could not update event' : 'Could not create event');
     } finally {
       setSaving(false);
     }
@@ -284,7 +349,13 @@ export function CalendarEventForm({ viewKey, projects, onCreated, variant = 'pag
         {error ? <small className="error-text">{error}</small> : null}
 
         <div className="dialog-actions calendar-event-submit">
-          <Button type="button" label={saving ? 'Saving…' : 'Create event'} icon="pi pi-check" onClick={() => void submit()} disabled={saving} />
+          <Button
+            type="button"
+            label={saving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Create event'}
+            icon="pi pi-check"
+            onClick={() => void submit()}
+            disabled={saving}
+          />
         </div>
     </div>
   );
@@ -308,9 +379,11 @@ export function CalendarEventForm({ viewKey, projects, onCreated, variant = 'pag
       <header className="calendar-event-form-header">
         <div>
           <h3 className="calendar-kicker">Calendar</h3>
-          <h1 className="calendar-title">Create event</h1>
+          <h1 className="calendar-title">{mode === 'edit' ? 'Edit activity' : 'Create event'}</h1>
           <p className="calendar-sub">
-            Schedule a project event, set tracking status and progress, and attach milestones. Only administrators can create events.
+            {mode === 'edit'
+              ? 'Update scheduling, status, progress, and milestones. Only administrators can edit activities.'
+              : 'Schedule a project event, set tracking status and progress, and attach milestones. Only administrators can create events.'}
           </p>
         </div>
       </header>

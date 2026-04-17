@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies.auth import get_current_admin
+from app.dependencies.auth import get_current_admin, get_current_lead
 from app.models import TicketConfiguration
 from app.schemas.ticket_configuration import (
     TicketConfigurationCreate,
@@ -17,7 +17,8 @@ router = APIRouter(prefix="/ticket-configuration", tags=["ticket-configuration"]
 
 
 @router.get("", response_model=list[TicketConfigurationResponse])
-def list_ticket_configuration(db: Session = Depends(get_db), _=Depends(get_current_admin)):
+def list_ticket_configuration(db: Session = Depends(get_db), _=Depends(get_current_lead)):
+    """Admins manage codes; team leads read labels/prefixes for ticket creation."""
     rows = db.execute(select(TicketConfiguration).order_by(TicketConfiguration.ticket_type.asc())).scalars().all()
     return rows
 
