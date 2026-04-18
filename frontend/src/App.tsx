@@ -4,6 +4,7 @@ import {
   CalendarDays,
   FileText,
   FolderKanban,
+  Layers,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
@@ -51,6 +52,8 @@ import { CustomerManagementSection } from './features/customer-management/Custom
 import { ProjectManagementSection } from './features/project-management/ProjectManagementSection';
 import { CalendarEventsTable } from './features/calendar/CalendarEventsTable';
 import { CalendarWorkspace } from './features/calendar/CalendarWorkspace';
+import { PersonalTasksWorkspace } from './features/calendar/PersonalTasksWorkspace';
+import { SprintsWorkspace } from './features/sprints/SprintsWorkspace';
 import { TicketManagementSection } from './features/tickets/TicketManagementSection';
 import { TicketConfigurationSection } from './features/ticket-configuration/TicketConfigurationSection';
 import { UserManagementSection } from './features/user-management/UserManagementSection';
@@ -61,7 +64,7 @@ import { LoginPage } from './pages/LoginPage';
 import { ProjectsPage } from './pages/Projects';
 
 type Role = 'admin' | 'teamLead' | 'teamMember';
-type TopPage = 'projects' | 'knowledgeBase' | 'calendar' | 'tickets' | 'kb';
+type TopPage = 'projects' | 'knowledgeBase' | 'calendar' | 'tickets' | 'kb' | 'sprints';
 type UserDialogMode = 'create' | 'edit';
 type ProjectFormStep = 0 | 1;
 type ProjectViewMode = 'table' | 'kanban';
@@ -85,14 +88,16 @@ const roleTopNav: Record<Role, NavItem[]> = {
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View'] },
   ],
   teamLead: [
-    { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['Create Ticket', 'Open Tickets', 'Assigned', 'Resolved'] },
+    { id: 'sprints', label: 'Sprints', icon: <Layers size={17} />, modules: ['Configuration', 'Monitoring'] },
+    { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['Create Ticket', 'Tickets'] },
     { id: 'kb', label: 'KB', icon: <BookOpenText size={17} />, modules: ['Search', 'Articles', 'Guidelines'] },
-    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View'] },
+    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View', 'Personal Tasks'] },
   ],
   teamMember: [
-    { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['My Tickets', 'Updates', 'History'] },
+    { id: 'sprints', label: 'Sprints', icon: <Layers size={17} />, modules: [] },
+    { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['My Tickets', 'History'] },
     { id: 'kb', label: 'KB', icon: <BookOpenText size={17} />, modules: ['Search', 'Articles', 'FAQs'] },
-    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View'] },
+    { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View', 'Personal Tasks'] },
   ],
 };
 
@@ -264,6 +269,9 @@ function App() {
   );
   const currentModule = useMemo(() => {
     const modules = selectedPage.modules;
+    if (!modules.length) {
+      return '';
+    }
     if (activeModule && modules.includes(activeModule)) {
       return activeModule;
     }
@@ -274,6 +282,8 @@ function App() {
   const isConfigurationView = role === 'admin' && selectedPage.id === 'knowledgeBase' && currentModule === 'Configuration';
   const isTicketsView =
     (role === 'teamLead' || role === 'teamMember') && selectedPage.id === 'tickets';
+  const isSprintsView =
+    (role === 'teamLead' || role === 'teamMember') && selectedPage.id === 'sprints';
 
   const filteredUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
@@ -492,7 +502,6 @@ function App() {
     }
     if (role === 'teamMember') {
       void loadTicketsForMember();
-      void loadTicketConfigurationsForLead();
     }
   }, [isAuthenticated, role, selectedPage.id]);
 
@@ -657,7 +666,7 @@ function App() {
       setRole(nextRole);
       const defaultPage = roleTopNav[nextRole][0];
       setActivePage(defaultPage.id);
-      setActiveModule(defaultPage.modules[0]);
+      setActiveModule(defaultPage.modules[0] ?? '');
       setIsAuthenticated(true);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Unable to login');
@@ -668,7 +677,7 @@ function App() {
 
   function selectPage(page: NavItem) {
     setActivePage(page.id);
-    setActiveModule(page.modules[0]);
+    setActiveModule(page.modules[0] ?? '');
   }
 
   function logout() {
@@ -1301,12 +1310,32 @@ function App() {
       );
     }
 
+    if (selectedPage.id === 'sprints') {
+      if (role === 'teamLead' || role === 'teamMember') {
+        return (
+          <SprintsWorkspace
+            viewKey={`${selectedPage.id}-${currentModule}`}
+            activeModule={currentModule}
+            role={role}
+          />
+        );
+      }
+      return renderDefaultContent();
+    }
+
     if (selectedPage.id === 'calendar') {
       return (
         <CalendarPage
           activeModule={currentModule}
           calendarContent={renderCalendarWorkspace()}
           tableContent={renderCalendarEventsTable()}
+          personalTasksContent={
+            role === 'teamLead' || role === 'teamMember' ? (
+              <PersonalTasksWorkspace viewKey={`personal-tasks-${currentModule}`} />
+            ) : (
+              renderDefaultContent()
+            )
+          }
           fallbackContent={renderDefaultContent()}
         />
       );
@@ -1361,12 +1390,14 @@ function App() {
             />
 
             <section className="dashboard-body">
-              <ModuleSidebar
-                pageLabel={selectedPage.label}
-                modules={selectedPage.modules}
-                activeModule={activeModule}
-                onSelectModule={setActiveModule}
-              />
+              {selectedPage.modules.length > 0 ? (
+                <ModuleSidebar
+                  pageLabel={selectedPage.label}
+                  modules={selectedPage.modules}
+                  activeModule={activeModule}
+                  onSelectModule={setActiveModule}
+                />
+              ) : null}
               <section className="content-panel">
                 <GlobalSearchBar
                   placeholder={
@@ -1378,9 +1409,21 @@ function App() {
                           ? 'Search ticket configuration…'
                           : isTicketsView
                             ? 'Search tickets by title, number, project, or assignee...'
-                            : 'Search projects, articles, events...'
+                            : isSprintsView
+                              ? role === 'teamMember'
+                                ? 'Use Tickets to search or update work items.'
+                                : 'Use Tickets to search work items; sprint analytics are in Monitoring.'
+                              : 'Search projects, articles, events...'
                   }
-                  value={isUserManagementView ? userSearch : isCustomerView ? customerSearch : isTicketsView ? ticketSearch : ''}
+                  value={
+                    isUserManagementView
+                      ? userSearch
+                      : isCustomerView
+                        ? customerSearch
+                        : isTicketsView
+                          ? ticketSearch
+                          : ''
+                  }
                   onChange={(value) => {
                     if (isUserManagementView) {
                       setUserSearch(value);

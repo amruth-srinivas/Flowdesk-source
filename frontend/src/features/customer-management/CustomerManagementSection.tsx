@@ -86,7 +86,18 @@ export function CustomerManagementSection(props: CustomerManagementSectionProps)
             </div>
           </div>
           {customerError ? <small className="error-text">{customerError}</small> : null}
-          <DataTable value={filteredCustomers} loading={isCustomersLoading} paginator rows={6} rowsPerPageOptions={[6, 10, 20]} className="user-table" emptyMessage="No customers found." onRowClick={(event) => onOpenCustomerDetailDialog(event.data as CustomerRecord)} rowClassName={() => 'clickable-row'}>
+          <DataTable
+            value={filteredCustomers}
+            loading={isCustomersLoading}
+            paginator
+            paginatorDropdownAppendTo="self"
+            rows={6}
+            rowsPerPageOptions={[6, 10, 20]}
+            className="user-table"
+            emptyMessage="No customers found."
+            onRowClick={(event) => onOpenCustomerDetailDialog(event.data as CustomerRecord)}
+            rowClassName={() => 'clickable-row'}
+          >
             <Column field="name" header="Customer" body={(customer: CustomerRecord) => <div className="user-name-cell"><strong>{customer.name}</strong><span>{customer.company || customer.email}</span></div>} />
             <Column field="email" header="Primary Email" body={(customer: CustomerRecord) => <span className="muted-cell">{customer.email}</span>} />
             <Column field="contacts" header="Contacts" body={(customer: CustomerRecord) => <span className="muted-cell">{customer.contacts.length || 0}</span>} />

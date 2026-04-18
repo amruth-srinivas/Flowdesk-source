@@ -200,3 +200,36 @@ def apply_ticket_public_reference_migration(engine: Engine) -> None:
                     conn.execute(text("ALTER TABLE tickets ADD COLUMN public_reference VARCHAR(48)"))
     except Exception as exc:
         logger.warning("Ticket public_reference migration failed: %s", exc)
+
+
+def apply_sprint_migrations(engine: Engine) -> None:
+    """Add tickets.sprint_id for existing databases (sprints table comes from create_all)."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for sprint migrations: %s", exc)
+        return
+
+    if "tickets" not in tables or "sprints" not in tables:
+        return
+
+    dialect = engine.dialect.name
+    columns = {col["name"] for col in inspector.get_columns("tickets")}
+    if "sprint_id" in columns:
+        return
+
+    logger.info("Adding tickets.sprint_id column for sprints")
+    try:
+        with engine.begin() as conn:
+            if dialect == "postgresql":
+                conn.execute(
+                    text(
+                        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS sprint_id UUID REFERENCES sprints(id) ON DELETE SET NULL"
+                    )
+                )
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tickets_sprint_id ON tickets (sprint_id)"))
+            else:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN sprint_id UUID"))
+    except Exception as exc:
+        logger.warning("Sprint column migration failed: %s", exc)

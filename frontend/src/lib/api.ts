@@ -422,6 +422,102 @@ export async function patchEventMilestoneRequest(
   return parseResponse<CalendarEventRecord>(response);
 }
 
+/** Per-user day tasks — not calendar events or ticket tasks. */
+export type PersonalTaskRecord = {
+  id: string;
+  user_id: string;
+  task_date: string;
+  title: string;
+  body: string | null;
+  is_completed: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PersonalTasksForDayResponse = {
+  pending_earlier: PersonalTaskRecord[];
+  for_day: PersonalTaskRecord[];
+};
+
+export type PersonalTaskCreatePayload = {
+  task_date: string;
+  title: string;
+  body?: string | null;
+  sort_order?: number;
+};
+
+export type PersonalTaskUpdatePayload = {
+  title?: string;
+  body?: string | null;
+  is_completed?: boolean;
+  task_date?: string;
+  sort_order?: number;
+};
+
+export async function getPersonalTasksForDayRequest(date: string): Promise<PersonalTasksForDayResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/work/personal-tasks/for-day?${new URLSearchParams({ date })}`,
+    { headers: getAuthHeaders() },
+  );
+  return parseResponse<PersonalTasksForDayResponse>(response);
+}
+
+export async function createPersonalTaskRequest(payload: PersonalTaskCreatePayload): Promise<PersonalTaskRecord> {
+  const response = await fetch(`${API_BASE_URL}/work/personal-tasks`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<PersonalTaskRecord>(response);
+}
+
+export async function updatePersonalTaskRequest(
+  taskId: string,
+  payload: PersonalTaskUpdatePayload,
+): Promise<PersonalTaskRecord> {
+  const response = await fetch(`${API_BASE_URL}/work/personal-tasks/${taskId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<PersonalTaskRecord>(response);
+}
+
+export async function deletePersonalTaskRequest(taskId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/work/personal-tasks/${taskId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
+}
+
+/** Deletes all personal tasks for the given calendar day (current user only). */
+export async function deleteAllPersonalTasksForDayRequest(date: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/work/personal-tasks/for-day?${new URLSearchParams({ date })}`,
+    {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    },
+  );
+  return parseResponse<void>(response);
+}
+
+export type PersonalTaskDaySummary = {
+  task_date: string;
+  total: number;
+  open: number;
+};
+
+export async function getPersonalTasksMonthSummaryRequest(from: string, to: string): Promise<PersonalTaskDaySummary[]> {
+  const params = new URLSearchParams({ from, to });
+  const response = await fetch(`${API_BASE_URL}/work/personal-tasks/month-summary?${params}`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<PersonalTaskDaySummary[]>(response);
+}
+
 export type TicketType =
   | 'bug_fix'
   | 'feature_request'
@@ -453,6 +549,7 @@ export type TicketRecord = {
   customer_id: string | null;
   due_date: string | null;
   closed_at: string | null;
+  sprint_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -477,6 +574,7 @@ export type TicketUpdatePayload = {
   assigned_to?: string | null;
   customer_id?: string | null;
   due_date?: string | null;
+  sprint_id?: string | null;
 };
 
 export async function getTicketsRequest(options?: { assignee_me?: boolean }): Promise<TicketRecord[]> {
@@ -674,4 +772,84 @@ export async function patchTicketStatusRequest(ticketId: string, status: TicketS
     body: JSON.stringify({ status }),
   });
   return parseResponse<TicketRecord>(response);
+}
+
+export type SprintRecord = {
+  id: string;
+  title: string;
+  sprint_type: string;
+  duration_days: number;
+  start_date: string;
+  end_date: string;
+  project_ids: string[];
+  created_by: string;
+  created_by_name: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SprintCreatePayload = {
+  title: string;
+  sprint_type?: string;
+  duration_days: number;
+  start_date: string;
+  project_ids: string[];
+  status?: string;
+};
+
+export type SprintUpdatePayload = {
+  title?: string;
+  sprint_type?: string;
+  duration_days?: number;
+  start_date?: string;
+  end_date?: string;
+  project_ids?: string[];
+  status?: string;
+};
+
+export type SprintAnalyticsRecord = {
+  sprint_id: string;
+  title: string;
+  total_tickets: number;
+  by_status: Record<string, number>;
+  tickets_done: number;
+  tickets_remaining: number;
+  progress_percent: number;
+};
+
+export async function getSprintsRequest(): Promise<SprintRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/sprints`, { headers: getAuthHeaders() });
+  return parseResponse<SprintRecord[]>(response);
+}
+
+export async function createSprintRequest(payload: SprintCreatePayload): Promise<SprintRecord> {
+  const response = await fetch(`${API_BASE_URL}/sprints`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<SprintRecord>(response);
+}
+
+export async function updateSprintRequest(sprintId: string, payload: SprintUpdatePayload): Promise<SprintRecord> {
+  const response = await fetch(`${API_BASE_URL}/sprints/${sprintId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<SprintRecord>(response);
+}
+
+export async function deleteSprintRequest(sprintId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/sprints/${sprintId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
+}
+
+export async function getSprintAnalyticsRequest(sprintId: string): Promise<SprintAnalyticsRecord> {
+  const response = await fetch(`${API_BASE_URL}/sprints/${sprintId}/analytics`, { headers: getAuthHeaders() });
+  return parseResponse<SprintAnalyticsRecord>(response);
 }

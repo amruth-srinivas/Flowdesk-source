@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion';
+import { LayoutGroup, motion } from 'framer-motion';
 import { Button } from 'primereact/button';
 import { Calendar } from 'primereact/calendar';
 import { Column } from 'primereact/column';
@@ -50,6 +50,23 @@ const STATUSES: { label: string; value: TicketStatus }[] = [
 ];
 
 const KANBAN_ORDER: TicketStatus[] = ['open', 'in_progress', 'in_review', 'resolved', 'closed'];
+
+/** Matches server `STATUS_FLOW` — Kanban may only move one step per drop. */
+const STATUS_FLOW_NEXT: Record<TicketStatus, TicketStatus[]> = {
+  open: ['in_progress'],
+  in_progress: ['in_review'],
+  in_review: ['resolved'],
+  resolved: ['closed'],
+  closed: [],
+};
+
+function isAllowedStatusTransition(from: TicketStatus, to: TicketStatus): boolean {
+  return STATUS_FLOW_NEXT[from].includes(to);
+}
+
+/** Lead “Tickets” page uses these keys with `filterByModule` (same as former sidebar modules). */
+const LEAD_LIST_SCOPE_KEYS = ['Open Tickets', 'Assigned', 'Resolved'] as const;
+type LeadListScopeKey = (typeof LEAD_LIST_SCOPE_KEYS)[number];
 
 function humanize(s: string): string {
   return s.replace(/_/g, ' ');
@@ -124,10 +141,8 @@ function filterByModule(
     switch (module) {
       case 'My Tickets':
         return tickets;
-      case 'Updates':
-        return tickets.filter((t) => ['open', 'in_progress', 'in_review'].includes(t.status));
       case 'History':
-        return tickets.filter((t) => ['resolved', 'closed'].includes(t.status));
+        return tickets.filter((t) => t.status === 'resolved' || t.status === 'closed');
       default:
         return tickets;
     }
@@ -226,6 +241,9 @@ export function TicketManagementSection({
   const [saving, setSaving] = useState(false);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [kanbanBusy, setKanbanBusy] = useState<string | null>(null);
+  const [kanbanDropError, setKanbanDropError] = useState('');
+  const [draggingTicketId, setDraggingTicketId] = useState<string | null>(null);
+  const [leadListScope, setLeadListScope] = useState<LeadListScopeKey>('Open Tickets');
 
   const [projectId, setProjectId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
@@ -254,9 +272,12 @@ export function TicketManagementSection({
     });
   }, [configByType]);
 
+  const effectiveListModule =
+    ticketRole === 'lead' && ticketModule === 'Tickets' ? leadListScope : ticketModule;
+
   const scoped = useMemo(
-    () => filterByModule(tickets, ticketModule, currentUserId, ticketRole),
-    [tickets, ticketModule, currentUserId, ticketRole],
+    () => filterByModule(tickets, effectiveListModule, currentUserId, ticketRole),
+    [tickets, effectiveListModule, currentUserId, ticketRole],
   );
 
   const statusDropdownOptions = useMemo(() => {
@@ -273,7 +294,19 @@ export function TicketManagementSection({
     return KANBAN_ORDER;
   }, [ticketRole]);
   const isLeadCreateModule = ticketRole === 'lead' && ticketModule === 'Create Ticket';
+  const isLeadTicketsPage = ticketRole === 'lead' && ticketModule === 'Tickets';
   const isListOnlyView = panel === 'none' && !isLeadCreateModule;
+
+  /** Sidebar module or lead list tab change must not keep another scope's ticket open in the detail pane. */
+  useEffect(() => {
+    if (isLeadCreateModule) {
+      return;
+    }
+    setPanel('none');
+    setEditingId(null);
+    setFormError('');
+  }, [ticketModule, isLeadCreateModule, leadListScope]);
+
   const filtered = useMemo(
     () => applySearch(scoped, search, projectLookup, userLookup),
     [scoped, search, projectLookup, userLookup],
@@ -454,10 +487,21 @@ export function TicketManagementSection({
     if (!t || t.status === status) {
       return;
     }
+    if (!isAllowedStatusTransition(t.status, status)) {
+      const msg = `Move tickets one column at a time (${humanize(t.status)} → next stage only, not ${humanize(status)}).`;
+      setKanbanDropError(msg);
+      window.setTimeout(() => setKanbanDropError((cur) => (cur === msg ? '' : cur)), 7000);
+      return;
+    }
     setKanbanBusy(ticketId);
+    setKanbanDropError('');
     try {
       await onPatchStatus(ticketId, status);
       onRefresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not update status';
+      setKanbanDropError(msg);
+      window.setTimeout(() => setKanbanDropError((cur) => (cur === msg ? '' : cur)), 8000);
     } finally {
       setKanbanBusy(null);
     }
@@ -617,6 +661,10 @@ export function TicketManagementSection({
     </div>
   );
 
+  const ticketsPageSubLine = isLeadTicketsPage
+    ? `${leadListScope === 'Open Tickets' ? 'Open' : leadListScope} — list or board; details on the right.`
+    : `${ticketModule} — list or board; details open on the right.`;
+
   return (
     <motion.article
       key={viewKey}
@@ -630,11 +678,40 @@ export function TicketManagementSection({
           <div className="tickets-left-head">
             <div>
               <h2 className="tickets-page-title">Tickets</h2>
-              <p className="tickets-page-sub">{ticketModule} — list or board; details open on the right.</p>
+              <p className="tickets-page-sub">{ticketsPageSubLine}</p>
             </div>
             <div className="tickets-toolbar-actions">
               {canCreateTickets ? (
                 <Button type="button" label="Create ticket" icon="pi pi-plus" outlined onClick={openCreate} />
+              ) : null}
+              {isLeadTicketsPage ? (
+                <LayoutGroup id="tickets-lead-scope-tabs">
+                  <div className="tickets-lead-tabs" role="tablist" aria-label="Tickets by scope">
+                    {LEAD_LIST_SCOPE_KEYS.map((key) => {
+                      const active = leadListScope === key;
+                      const label = key === 'Open Tickets' ? 'Open' : key;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          className={`tickets-lead-tab${active ? ' tickets-lead-tab--active' : ''}`}
+                          onClick={() => setLeadListScope(key)}
+                        >
+                          {active ? (
+                            <motion.span
+                              layoutId="tickets-lead-scope-pill"
+                              className="tickets-lead-tab-pill"
+                              transition={{ type: 'spring', stiffness: 440, damping: 34 }}
+                            />
+                          ) : null}
+                          <span className="tickets-lead-tab-label">{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </LayoutGroup>
               ) : null}
               {isLeadCreateModule ? null : (
                 <SelectButton
@@ -651,15 +728,19 @@ export function TicketManagementSection({
           </div>
 
           {error ? <p className="error-text tickets-banner-error">{error}</p> : null}
+          {kanbanDropError ? <p className="error-text tickets-banner-error">{kanbanDropError}</p> : null}
 
           {viewMode === 'list' || isLeadCreateModule ? (
             <DataTable
               value={filtered}
               loading={isLoading}
               paginator
+              paginatorDropdownAppendTo="self"
               rows={10}
               rowsPerPageOptions={[10, 20, 40]}
               className="user-table tickets-table tickets-table-compact"
+              tableClassName="tickets-datatable-table"
+              tableStyle={{ width: '100%', tableLayout: 'fixed' }}
               emptyMessage="No tickets match this view."
               dataKey="id"
               selectionMode="single"
@@ -676,29 +757,57 @@ export function TicketManagementSection({
                   openEdit(row);
                 }
               }}
-              rowClassName={(row) => (row.id === editingId ? 'tickets-row-selected' : '')}
+              rowClassName={(row) => {
+                const classes = [
+                  row.id === editingId ? 'tickets-row-selected' : '',
+                  `tickets-row-priority-${row.priority}`,
+                  row.status === 'resolved' || row.status === 'closed' ? 'tickets-row-resolved' : '',
+                ];
+                return classes.filter(Boolean).join(' ');
+              }}
             >
               {isLeadCreateModule ? null : (
                 <Column
                   header="Ref"
-                  style={{ width: '108px' }}
-                  body={(row: TicketRecord) => <span className="tickets-ref-cell">{displayTicketRef(row)}</span>}
+                  headerClassName="tickets-col-ref"
+                  bodyClassName="tickets-col-ref"
+                  style={{ minWidth: '124px', width: '128px' }}
+                  body={(row: TicketRecord) => (
+                    <span
+                      className={`tickets-ref-chip tickets-ref-type-${row.type}`}
+                      title={displayTicketRef(row)}
+                    >
+                      {displayTicketRef(row)}
+                    </span>
+                  )}
                 />
               )}
               <Column
                 field="title"
                 header="Title"
                 sortable
-                style={{ minWidth: '160px' }}
+                headerClassName="tickets-col-title"
+                bodyClassName="tickets-col-title"
+                style={{ minWidth: '200px' }}
                 body={(row: TicketRecord) => <span className="tickets-title-cell">{row.title}</span>}
               />
               {isLeadCreateModule ? null : (
-                <Column header="Project" body={(row: TicketRecord) => projectLookup.get(row.project_id) ?? '—'} />
+                <Column
+                  header="Project"
+                  headerClassName="tickets-col-project"
+                  bodyClassName="tickets-col-project"
+                  style={{ minWidth: '132px', width: '160px' }}
+                  body={(row: TicketRecord) => (
+                    <span className="tickets-project-cell">{projectLookup.get(row.project_id) ?? '—'}</span>
+                  )}
+                />
               )}
               {isLeadCreateModule ? null : (
                 <Column
                   header="Assignee"
-                  style={{ minWidth: '120px' }}
+                  headerClassName="tickets-col-assignee"
+                  bodyClassName="tickets-col-assignee"
+                  style={{ minWidth: '140px', width: '168px' }}
                   body={(row: TicketRecord) => (
                     <span className="tickets-assignee-cell">
                       {row.assignee_name ?? (row.assignee_id ? userLookup.get(row.assignee_id) : null) ?? '—'}
@@ -709,15 +818,31 @@ export function TicketManagementSection({
               <Column
                 field="priority"
                 header="Pri."
-                style={{ width: '88px' }}
-                body={(row: TicketRecord) => <Tag value={humanize(row.priority)} severity={prioritySeverity(row.priority)} rounded />}
+                headerClassName="tickets-col-pri"
+                bodyClassName="tickets-col-pri"
+                style={{ minWidth: '96px', width: '104px' }}
+                body={(row: TicketRecord) => (
+                  <Tag
+                    className={`tickets-table-tag tickets-table-tag--priority tickets-priority-${row.priority}`}
+                    value={humanize(row.priority)}
+                    severity={prioritySeverity(row.priority)}
+                    rounded
+                  />
+                )}
               />
               <Column
                 header="Status"
-                style={{ minWidth: '140px' }}
+                headerClassName="tickets-col-status"
+                bodyClassName="tickets-col-status"
+                style={{ minWidth: '152px', width: '168px' }}
                 body={(row: TicketRecord) =>
                   (!canEditTickets || (ticketRole === 'member' && row.status === 'closed')) ? (
-                    <Tag value={humanize(row.status)} severity={statusSeverity(row.status)} rounded />
+                    <Tag
+                      className={`tickets-table-tag tickets-table-tag--status tickets-status-${row.status}`}
+                      value={humanize(row.status)}
+                      severity={statusSeverity(row.status)}
+                      rounded
+                    />
                   ) : (
                     <Dropdown
                       value={row.status}
@@ -732,7 +857,9 @@ export function TicketManagementSection({
               />
               <Column
                 header={<span className="tickets-actions-header">Actions</span>}
-                style={{ width: '132px' }}
+                headerClassName="tickets-col-actions"
+                bodyClassName="tickets-col-actions"
+                style={{ minWidth: '136px', width: '144px' }}
                 body={(row: TicketRecord) => (
                   <div className="tickets-row-actions tickets-row-actions--icons" onClick={(e) => e.stopPropagation()}>
                     <button
@@ -776,7 +903,12 @@ export function TicketManagementSection({
                   className="kanban-column"
                   onDragOver={(e) => {
                     e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
+                    const ticket = draggingTicketId ? filtered.find((x) => x.id === draggingTicketId) : null;
+                    if (ticket && isAllowedStatusTransition(ticket.status, status)) {
+                      e.dataTransfer.dropEffect = 'move';
+                    } else {
+                      e.dataTransfer.dropEffect = 'none';
+                    }
                   }}
                   onDrop={(e) => {
                     e.preventDefault();
@@ -784,6 +916,7 @@ export function TicketManagementSection({
                     if (id) {
                       void handleKanbanDrop(status, id);
                     }
+                    setDraggingTicketId(null);
                   }}
                 >
                   <header className="kanban-column-header">
@@ -801,9 +934,12 @@ export function TicketManagementSection({
                           className={`kanban-card ${row.id === editingId ? 'kanban-card-selected' : ''}`}
                           draggable
                           onDragStart={(e) => {
+                            setDraggingTicketId(row.id);
+                            setKanbanDropError('');
                             e.dataTransfer.setData('text/plain', row.id);
                             e.dataTransfer.effectAllowed = 'move';
                           }}
+                          onDragEnd={() => setDraggingTicketId(null)}
                           onClick={() => openEdit(row)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {

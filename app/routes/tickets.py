@@ -14,6 +14,7 @@ from app.dependencies.auth import get_current_member
 from app.models import (
     Approval,
     Resolution,
+    Sprint,
     Ticket,
     TicketAttachment,
     TicketComment,
@@ -159,6 +160,18 @@ def update_ticket(
         ticket.customer_id = payload.customer_id
     if "due_date" in data:
         ticket.due_date = payload.due_date
+    if "sprint_id" in data:
+        sid = payload.sprint_id
+        if sid is not None:
+            sp = db.get(Sprint, sid)
+            if not sp:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sprint not found")
+            if sp.project_ids and ticket.project_id not in sp.project_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Ticket's project must be included in the sprint",
+                )
+        ticket.sprint_id = sid
 
     db.commit()
     db.refresh(ticket)

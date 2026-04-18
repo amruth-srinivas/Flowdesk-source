@@ -26,6 +26,7 @@ class TicketUpdate(BaseModel):
     assigned_to: UUID | None = None
     customer_id: UUID | None = None
     due_date: date | None = None
+    sprint_id: UUID | None = None
 
 
 class TicketAssign(BaseModel):
@@ -53,6 +54,7 @@ class TicketResponse(BaseModel):
     customer_id: UUID | None
     due_date: date | None = None
     closed_at: datetime | None = None
+    sprint_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -80,7 +80,18 @@ export function ProjectManagementSection(props: ProjectManagementSectionProps) {
 
         {projectViewMode === 'table' ? (
           <div className="user-table-shell project-shell">
-            <DataTable value={filteredProjects} loading={isProjectsLoading} paginator rows={6} rowsPerPageOptions={[6, 10, 20]} className="user-table" emptyMessage="No projects found." onRowClick={(event) => openProjectDetailDialog(event.data as ProjectRecord)} rowClassName={() => 'clickable-row'}>
+            <DataTable
+              value={filteredProjects}
+              loading={isProjectsLoading}
+              paginator
+              paginatorDropdownAppendTo="self"
+              rows={6}
+              rowsPerPageOptions={[6, 10, 20]}
+              className="user-table"
+              emptyMessage="No projects found."
+              onRowClick={(event) => openProjectDetailDialog(event.data as ProjectRecord)}
+              rowClassName={() => 'clickable-row'}
+            >
               <Column field="name" header="Project" body={(project: ProjectRecord) => <div className="user-name-cell"><strong>{project.name}</strong><span>{project.description || 'No description added yet.'}</span></div>} />
               <Column field="status" header="Status" body={(project: ProjectRecord) => <Tag value={project.status.replace('-', ' ')} severity={projectStatusSeverities[project.status]} rounded />} />
               <Column field="lead_id" header="Team Lead" body={(project: ProjectRecord) => <span className="muted-cell">{project.lead_id ? userLookup.get(project.lead_id)?.name ?? 'Assigned user' : 'Not assigned'}</span>} />

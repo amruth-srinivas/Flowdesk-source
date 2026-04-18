@@ -222,6 +222,7 @@ export function TicketConfigurationSection({
           value={rows}
           loading={isLoading}
           paginator
+          paginatorDropdownAppendTo="self"
           rows={10}
           className="user-table tc-type-codes-table"
           emptyMessage="No ticket type codes configured yet."

@@ -104,7 +104,16 @@ export function UserManagementSection(props: UserManagementSectionProps) {
           </div>
         </div>
         {userManagementError ? <small className="error-text">{userManagementError}</small> : null}
-        <DataTable value={filteredUsers} loading={isUsersLoading} paginator rows={6} rowsPerPageOptions={[6, 10, 20]} className="user-table" emptyMessage="No users found.">
+        <DataTable
+          value={filteredUsers}
+          loading={isUsersLoading}
+          paginator
+          paginatorDropdownAppendTo="self"
+          rows={6}
+          rowsPerPageOptions={[6, 10, 20]}
+          className="user-table"
+          emptyMessage="No users found."
+        >
           <Column field="name" header="Name" body={(user: UserRecord) => <div className="user-name-cell"><strong>{user.name}</strong><span>{user.employee_id}</span></div>} />
           <Column field="email" header="Email" body={(user: UserRecord) => <span className="muted-cell">{user.email}</span>} />
           <Column field="role" header="Role" body={(user: UserRecord) => renderRoleTag(user.role)} />

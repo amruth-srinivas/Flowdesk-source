@@ -6,15 +6,26 @@ type CalendarPageProps = {
   calendarContent: ReactNode;
   /** Sortable table of all events. */
   tableContent: ReactNode;
+  /** Per-user daily checklists — separate from calendar events (team lead / member). */
+  personalTasksContent: ReactNode;
   fallbackContent: ReactNode;
 };
 
-export function CalendarPage({ activeModule, calendarContent, tableContent, fallbackContent }: CalendarPageProps) {
+export function CalendarPage({
+  activeModule,
+  calendarContent,
+  tableContent,
+  personalTasksContent,
+  fallbackContent,
+}: CalendarPageProps) {
   if (activeModule === 'Calendar') {
     return <>{calendarContent}</>;
   }
   if (activeModule === 'View') {
     return <>{tableContent}</>;
+  }
+  if (activeModule === 'Personal Tasks') {
+    return <>{personalTasksContent}</>;
   }
   return <>{fallbackContent}</>;
 }

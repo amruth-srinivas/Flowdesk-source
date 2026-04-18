@@ -41,3 +41,8 @@ def get_current_lead(user: User = Depends(get_current_user)) -> User:
 
 def get_current_member(user: User = Depends(get_current_user)) -> User:
     return _require_role(user, {UserRole.ADMIN, UserRole.LEAD, UserRole.MEMBER})
+
+
+def get_current_lead_or_member(user: User = Depends(get_current_user)) -> User:
+    """Team lead and member only — used for personal calendar tasks (not admins)."""
+    return _require_role(user, {UserRole.LEAD, UserRole.MEMBER})

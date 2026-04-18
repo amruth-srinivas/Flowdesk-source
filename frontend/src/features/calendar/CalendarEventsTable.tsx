@@ -83,6 +83,7 @@ export function CalendarEventsTable({
           value={rows}
           loading={isLoading}
           paginator
+          paginatorDropdownAppendTo="self"
           rows={12}
           rowsPerPageOptions={[12, 24, 48]}
           sortField="start_at"
