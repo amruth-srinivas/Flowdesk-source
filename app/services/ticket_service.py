@@ -1,4 +1,6 @@
+import json
 from datetime import datetime
+from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -6,6 +8,17 @@ from sqlalchemy.orm import Session
 
 from app.constants.enums import TicketStatus, UserRole
 from app.models import Approval, Resolution, Ticket, TicketHistory
+
+
+def dedupe_assignee_ids(assignee_ids: list[UUID]) -> list[UUID]:
+    seen: set[UUID] = set()
+    out: list[UUID] = []
+    for uid in assignee_ids:
+        if uid in seen:
+            continue
+        seen.add(uid)
+        out.append(uid)
+    return out
 
 STATUS_FLOW = {
     TicketStatus.OPEN: {TicketStatus.IN_PROGRESS},
@@ -16,16 +29,29 @@ STATUS_FLOW = {
 }
 
 
-def assign_ticket(db: Session, ticket: Ticket, assignee_id, changed_by) -> Ticket:
-    old_value = str(ticket.assignee_id) if ticket.assignee_id else None
-    ticket.assignee_id = assignee_id
-    db.add(TicketHistory(ticket_id=ticket.id, changed_by=changed_by, field_name="assignee_id", old_value=old_value, new_value=str(assignee_id)))
+def assign_ticket(db: Session, ticket: Ticket, assignee_ids: list[UUID], changed_by) -> Ticket:
+    old_ids = list(ticket.assignee_ids or [])
+    old_value = json.dumps([str(x) for x in old_ids]) if old_ids else None
+    new_ids = dedupe_assignee_ids(assignee_ids)
+    ticket.assignee_ids = new_ids
+    new_value = json.dumps([str(x) for x in new_ids]) if new_ids else None
+    db.add(
+        TicketHistory(
+            ticket_id=ticket.id,
+            changed_by=changed_by,
+            field_name="assignee_ids",
+            old_value=old_value,
+            new_value=new_value,
+        )
+    )
     db.commit()
     db.refresh(ticket)
     return ticket
 
 
-def update_ticket_status(db: Session, ticket: Ticket, new_status: TicketStatus, user) -> Ticket:
+def update_ticket_status(
+    db: Session, ticket: Ticket, new_status: TicketStatus, user, comment: str | None = None
+) -> Ticket:
     if new_status == ticket.status:
         return ticket
     allowed = STATUS_FLOW.get(ticket.status, set())
@@ -47,6 +73,7 @@ def update_ticket_status(db: Session, ticket: Ticket, new_status: TicketStatus, 
     ticket.status = new_status
     if new_status == TicketStatus.CLOSED:
         ticket.closed_at = datetime.utcnow()
+    note = comment.strip() if comment else None
     db.add(
         TicketHistory(
             ticket_id=ticket.id,
@@ -54,6 +81,7 @@ def update_ticket_status(db: Session, ticket: Ticket, new_status: TicketStatus, 
             field_name="status",
             old_value=old_status,
             new_value=new_status.value,
+            change_note=note,
         )
     )
     db.commit()

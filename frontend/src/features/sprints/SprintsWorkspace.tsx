@@ -1122,7 +1122,7 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
         header="New ticket"
         visible={createTicketOpen}
         className="sprints-ticket-create-dialog"
-        style={{ width: 'min(720px, 96vw)' }}
+        style={{ width: 'min(1100px, 98vw)' }}
         onHide={() => {
           if (!createTicketSaving) setCreateTicketOpen(false);
         }}

@@ -544,8 +544,8 @@ export type TicketRecord = {
   project_id: string;
   created_by: string;
   created_by_name?: string | null;
-  assignee_id: string | null;
-  assignee_name?: string | null;
+  assignee_ids: string[];
+  assignee_names?: string[];
   customer_id: string | null;
   due_date: string | null;
   closed_at: string | null;
@@ -560,7 +560,7 @@ export type TicketCreatePayload = {
   type: TicketType;
   priority: TicketPriority;
   project_id: string;
-  assigned_to?: string | null;
+  assigned_to?: string[];
   customer_id?: string | null;
   due_date?: string | null;
 };
@@ -571,7 +571,7 @@ export type TicketUpdatePayload = {
   type?: TicketType;
   priority?: TicketPriority;
   project_id?: string;
-  assigned_to?: string | null;
+  assigned_to?: string[];
   customer_id?: string | null;
   due_date?: string | null;
   sprint_id?: string | null;
@@ -638,6 +638,7 @@ export type TicketHistoryRecord = {
   field_name: string;
   old_value: string | null;
   new_value: string | null;
+  change_note?: string | null;
   created_at: string;
 };
 
@@ -689,6 +690,7 @@ export async function putTicketResolutionRequest(ticketId: string, payload: Reso
 
 export type TicketAttachmentRecord = {
   id: string;
+  comment_id?: string | null;
   filename: string;
   file_size_bytes: number;
   mime_type: string;
@@ -704,10 +706,17 @@ export async function getTicketAttachmentsRequest(ticketId: string): Promise<Tic
   return parseResponse<TicketAttachmentRecord[]>(response);
 }
 
-export async function uploadTicketAttachmentRequest(ticketId: string, file: File): Promise<TicketAttachmentRecord> {
+export async function uploadTicketAttachmentRequest(
+  ticketId: string,
+  file: File,
+  commentId?: string,
+): Promise<TicketAttachmentRecord> {
   const token = localStorage.getItem('accessToken');
   const body = new FormData();
   body.append('file', file);
+  if (commentId) {
+    body.append('comment_id', commentId);
+  }
   const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/attachments`, {
     method: 'POST',
     headers: {
@@ -747,6 +756,21 @@ export async function downloadTicketAttachmentFile(
   URL.revokeObjectURL(url);
 }
 
+export async function getTicketAttachmentBlobRequest(ticketId: string, attachmentId: string): Promise<Blob> {
+  const token = localStorage.getItem('accessToken');
+  const response = await fetch(ticketAttachmentFileUrl(ticketId, attachmentId), {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    const detail = errorBody?.detail;
+    throw new Error(typeof detail === 'string' ? detail : 'Preview failed');
+  }
+  return response.blob();
+}
+
 export async function createTicketRequest(payload: TicketCreatePayload): Promise<TicketRecord> {
   const response = await fetch(`${API_BASE_URL}/tickets`, {
     method: 'POST',
@@ -765,11 +789,15 @@ export async function updateTicketRequest(ticketId: string, payload: TicketUpdat
   return parseResponse<TicketRecord>(response);
 }
 
-export async function patchTicketStatusRequest(ticketId: string, status: TicketStatus): Promise<TicketRecord> {
+export async function patchTicketStatusRequest(
+  ticketId: string,
+  status: TicketStatus,
+  comment?: string | null,
+): Promise<TicketRecord> {
   const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/status`, {
     method: 'PATCH',
     headers: getAuthHeaders(),
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, comment: comment?.trim() || null }),
   });
   return parseResponse<TicketRecord>(response);
 }

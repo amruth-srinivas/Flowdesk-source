@@ -1,9 +1,12 @@
 import { Button } from 'primereact/button';
 import { Checkbox } from 'primereact/checkbox';
-import { InputTextarea } from 'primereact/inputtextarea';
+import { Dialog } from 'primereact/dialog';
+import { Editor } from 'primereact/editor';
 import { TabPanel, TabView } from 'primereact/tabview';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  getTicketAttachmentBlobRequest,
   downloadTicketAttachmentFile,
   getTicketAttachmentsRequest,
   getTicketCommentsRequest,
@@ -32,14 +35,115 @@ function formatWhen(iso: string): string {
   }
 }
 
+function plainTextFromHtml(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function toDisplayHtml(content: string): string {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return '—';
+  }
+  if (/<[a-z][\s\S]*>/i.test(trimmed)) {
+    return trimmed;
+  }
+  return escapeHtml(content).replaceAll('\n', '<br/>');
+}
+
+function initials(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) {
+    return 'U';
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
+const resolutionEditorHeaderTemplate = (
+  <>
+    <span className="ql-formats">
+      <select className="ql-size" defaultValue="" title="Font size">
+        <option value="">Normal</option>
+        <option value="large">Large</option>
+        <option value="huge">Huge</option>
+      </select>
+      <select className="ql-color" defaultValue="" title="Text color">
+        <option value="" />
+        <option value="#000000" />
+        <option value="#e60000" />
+        <option value="#ff9900" />
+        <option value="#ffff00" />
+        <option value="#008a00" />
+        <option value="#0066cc" />
+        <option value="#9933ff" />
+      </select>
+      <select className="ql-background" defaultValue="" title="Highlight color">
+        <option value="" />
+        <option value="#ffffff" />
+        <option value="#fff2cc" />
+        <option value="#fde68a" />
+        <option value="#d1fae5" />
+        <option value="#dbeafe" />
+        <option value="#fce7f3" />
+      </select>
+    </span>
+    <span className="ql-formats">
+      <button className="ql-bold" aria-label="Bold" />
+      <button className="ql-italic" aria-label="Italic" />
+      <button className="ql-underline" aria-label="Underline" />
+    </span>
+    <span className="ql-formats">
+      <button className="ql-list" value="ordered" aria-label="Numbered list" />
+      <button className="ql-list" value="bullet" aria-label="Bullet list" />
+      <button className="ql-link" aria-label="Insert link" />
+      <button className="ql-clean" aria-label="Clear formatting" />
+    </span>
+  </>
+);
+
+const conversationEditorHeaderTemplate = (
+  <>
+    <span className="ql-formats">
+      <button className="ql-bold" aria-label="Bold" />
+      <button className="ql-italic" aria-label="Italic" />
+      <button className="ql-underline" aria-label="Underline" />
+    </span>
+    <span className="ql-formats">
+      <button className="ql-list" value="ordered" aria-label="Numbered list" />
+      <button className="ql-list" value="bullet" aria-label="Bullet list" />
+      <button className="ql-link" aria-label="Insert link" />
+      <button className="ql-clean" aria-label="Clear formatting" />
+    </span>
+  </>
+);
+
 type TicketDetailTabsProps = {
   viewKey: string;
   ticket: TicketRecord;
+  currentUserId?: string;
   canPostInternalNotes: boolean;
   onThreadChanged: () => void;
 };
 
-export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThreadChanged }: TicketDetailTabsProps) {
+export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostInternalNotes, onThreadChanged }: TicketDetailTabsProps) {
   const [tabIndex, setTabIndex] = useState(0);
   const [comments, setComments] = useState<TicketCommentRecord[]>([]);
   const [history, setHistory] = useState<TicketHistoryRecord[]>([]);
@@ -59,6 +163,9 @@ export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThre
   const [resolutionLoaded, setResolutionLoaded] = useState(false);
 
   const [uploadBusy, setUploadBusy] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [attachmentPreviewUrls, setAttachmentPreviewUrls] = useState<Record<string, string>>({});
+  const [mediaPreview, setMediaPreview] = useState<{ kind: 'image' | 'video'; url: string; name: string; attachmentId: string } | null>(null);
 
   const reloadThread = useCallback(async () => {
     setError('');
@@ -100,30 +207,80 @@ export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThre
     void reloadThread();
   }, [ticket.id, reloadThread]);
 
+  useEffect(() => {
+    return () => {
+      Object.values(attachmentPreviewUrls).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [attachmentPreviewUrls]);
+
+  useEffect(() => {
+    const media = attachments.filter(
+      (a) =>
+        Boolean(a.comment_id) &&
+        (a.mime_type.startsWith('image/') || a.mime_type.startsWith('video/')) &&
+        !attachmentPreviewUrls[a.id],
+    );
+    if (!media.length) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const entries: Array<[string, string]> = [];
+      for (const a of media) {
+        try {
+          const blob = await getTicketAttachmentBlobRequest(ticket.id, a.id);
+          entries.push([a.id, URL.createObjectURL(blob)]);
+        } catch {
+          // Preview is optional; keep fallback download pill.
+        }
+      }
+      if (cancelled || !entries.length) {
+        return;
+      }
+      setAttachmentPreviewUrls((current) => {
+        const next = { ...current };
+        for (const [id, url] of entries) {
+          next[id] = url;
+        }
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [attachments, attachmentPreviewUrls, ticket.id]);
+
   async function handlePostComment() {
-    const body = newComment.trim();
-    if (!body) {
+    const body = newComment;
+    const plain = plainTextFromHtml(body);
+    if (!plain && pendingFiles.length === 0) {
       return;
     }
     setPosting(true);
+    setUploadBusy(true);
     try {
-      await postTicketCommentRequest(ticket.id, {
-        body,
+      const created = await postTicketCommentRequest(ticket.id, {
+        body: plain ? body : 'Shared attachment',
         is_internal: canPostInternalNotes && internalNote,
       });
+      for (const file of pendingFiles) {
+        await uploadTicketAttachmentRequest(ticket.id, file, created.id);
+      }
       setNewComment('');
       setInternalNote(false);
+      setPendingFiles([]);
       await reloadThread();
       onThreadChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not post comment');
     } finally {
+      setUploadBusy(false);
       setPosting(false);
     }
   }
 
   async function handleSaveResolution() {
-    if (!resolutionSummary.trim()) {
+    if (!plainTextFromHtml(resolutionSummary).trim()) {
       setError('Resolution summary is required.');
       return;
     }
@@ -171,6 +328,10 @@ export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThre
     }
   }
 
+  function openMediaPreview(kind: 'image' | 'video', url: string, name: string, attachmentId: string) {
+    setMediaPreview({ kind, url, name, attachmentId });
+  }
+
   type TimelineItem = {
     id: string;
     at: string;
@@ -195,7 +356,7 @@ export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThre
         id: `comment-${c.id}`,
         at: c.created_at,
         title: c.is_internal ? 'Internal note added' : 'Comment added',
-        subtitle: c.body,
+        subtitle: plainTextFromHtml(c.body),
         actor: c.author_name,
         kind: 'comment' as const,
       })),
@@ -203,7 +364,7 @@ export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThre
         id: `history-${h.id}`,
         at: h.created_at,
         title: `${humanize(h.field_name)} changed`,
-        subtitle: `${h.old_value ?? '—'} -> ${h.new_value ?? '—'}`,
+        subtitle: `${h.old_value ?? '—'} -> ${h.new_value ?? '—'}${h.change_note?.trim() ? `\nComment: ${h.change_note.trim()}` : ''}`,
         actor: h.changer_name,
         kind: 'history' as const,
       })),
@@ -222,13 +383,57 @@ export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThre
         id: `resolution-${resolutionInfo.id}`,
         at: resolutionInfo.updated_at || resolutionInfo.created_at,
         title: 'Resolution updated',
-        subtitle: resolutionInfo.summary,
+        subtitle: plainTextFromHtml(resolutionInfo.summary),
         actor: resolutionInfo.resolver_name,
         kind: 'resolution',
       });
     }
     return items.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   }, [ticket, comments, history, attachments, resolutionInfo]);
+
+  const conversationItems = useMemo(
+    () =>
+      [
+        {
+          id: `orig-${ticket.id}`,
+          userId: ticket.created_by,
+          author: ticket.created_by_name ?? 'Requester',
+          at: ticket.created_at,
+          body: ticket.description?.trim() || '—',
+          kind: 'request' as const,
+          internal: false,
+        },
+        ...comments.map((c) => ({
+          id: `comment-${c.id}`,
+          userId: c.author_id,
+          author: c.author_name,
+          at: c.created_at,
+          body: c.body,
+          kind: c.is_internal ? ('internal' as const) : ('reply' as const),
+          internal: c.is_internal,
+        })),
+      ]
+        .map((item) => ({
+          ...item,
+          mine: Boolean(currentUserId && item.userId === currentUserId),
+        }))
+        .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()),
+    [ticket.id, ticket.created_by, ticket.created_at, ticket.created_by_name, ticket.description, comments, currentUserId],
+  );
+
+  const commentAttachments = useMemo(() => {
+    const grouped: Record<string, typeof attachments> = {};
+    for (const a of attachments) {
+      if (!a.comment_id) {
+        continue;
+      }
+      if (!grouped[a.comment_id]) {
+        grouped[a.comment_id] = [];
+      }
+      grouped[a.comment_id].push(a);
+    }
+    return grouped;
+  }, [attachments]);
 
   return (
     <div className="ticket-detail-tabs">
@@ -240,62 +445,152 @@ export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThre
         className="ticket-detail-tabview"
       >
         <TabPanel header="Conversation">
-          <div className="ticket-conv-thread">
-            {loading ? (
-              <p className="ticket-detail-muted">Loading…</p>
-            ) : (
-              <>
-                <div className="ticket-conv-bubble ticket-conv-bubble--orig">
-                  <div className="ticket-conv-bubble-head">
-                    <span className="ticket-conv-author">{ticket.created_by_name ?? 'Requester'}</span>
-                    <span className="ticket-conv-time">{formatWhen(ticket.created_at)}</span>
-                  </div>
-                  <p className="ticket-conv-body">{ticket.description?.trim() || '—'}</p>
-                </div>
-                {comments.map((c) => (
-                  <div
-                    key={c.id}
-                    className={`ticket-conv-bubble ${c.is_internal ? 'ticket-conv-bubble--internal' : ''}`}
+          <div className="ticket-conv-thread ticket-conv-thread--chat">
+            {loading ? <p className="ticket-detail-muted">Loading…</p> : null}
+            {!loading ? (
+              <AnimatePresence initial={false}>
+                {conversationItems.map((item, index) => (
+                  <motion.article
+                    key={item.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.18, delay: Math.min(index * 0.02, 0.2) }}
+                    className={`ticket-chat-row ${item.mine ? 'ticket-chat-row--mine' : 'ticket-chat-row--theirs'} ticket-chat-row--${item.kind}`}
                   >
-                    <div className="ticket-conv-bubble-head">
-                      <span className="ticket-conv-author">{c.author_name}</span>
-                      {c.is_internal ? <span className="ticket-conv-internal">Internal</span> : null}
-                      <span className="ticket-conv-time">{formatWhen(c.created_at)}</span>
+                    <div className={`ticket-chat-avatar ${item.mine ? 'ticket-chat-avatar--mine' : 'ticket-chat-avatar--theirs'} ticket-chat-avatar--${item.kind}`}>
+                      <span>{initials(item.author)}</span>
                     </div>
-                    <p className="ticket-conv-body">{c.body}</p>
+                    <div className={`ticket-chat-bubble ${item.mine ? 'ticket-chat-bubble--mine' : 'ticket-chat-bubble--theirs'} ticket-chat-bubble--${item.kind}`}>
+                      <header className="ticket-chat-head">
+                        <span className="ticket-chat-author">{item.author}</span>
+                        <span className="ticket-chat-time">{formatWhen(item.at)}</span>
+                      </header>
+                      <p className="ticket-chat-body" dangerouslySetInnerHTML={{ __html: toDisplayHtml(item.body) }} />
+                      {(commentAttachments[item.id.replace('comment-', '')] ?? []).length ? (
+                        <div className="ticket-chat-media-grid">
+                          {(commentAttachments[item.id.replace('comment-', '')] ?? []).map((a) => {
+                            const preview = attachmentPreviewUrls[a.id];
+                            const isImage = a.mime_type.startsWith('image/');
+                            const isVideo = a.mime_type.startsWith('video/');
+                            if (preview && isImage) {
+                              return (
+                                <button
+                                  key={a.id}
+                                  type="button"
+                                  className="ticket-chat-media-card"
+                                  onClick={() => openMediaPreview('image', preview, a.filename, a.id)}
+                                  title={a.filename}
+                                >
+                                  <img src={preview} alt={a.filename} />
+                                </button>
+                              );
+                            }
+                            if (preview && isVideo) {
+                              return (
+                                <button
+                                  key={a.id}
+                                  type="button"
+                                  className="ticket-chat-media-card ticket-chat-media-card--video"
+                                  onClick={() => openMediaPreview('video', preview, a.filename, a.id)}
+                                  title={a.filename}
+                                >
+                                  <video src={preview} controls preload="metadata" />
+                                </button>
+                              );
+                            }
+                            return (
+                              <button
+                                key={a.id}
+                                type="button"
+                                className="ticket-conv-media-pill"
+                                onClick={() => void handleDownload(a.id, a.filename)}
+                                title={a.filename}
+                              >
+                                <i className="pi pi-file" />
+                                <span>{a.filename}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      {item.internal ? <span className="ticket-chat-tag">Internal note</span> : null}
+                    </div>
+                  </motion.article>
+                ))}
+              </AnimatePresence>
+            ) : null}
+          </div>
+          <motion.div
+            className="ticket-conv-reply ticket-conv-reply--chat"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <div className="ticket-conv-controls">
+              <input
+                type="file"
+                id={`ticket-quick-upload-${viewKey}`}
+                className="ticket-file-input"
+                accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                multiple
+                disabled={uploadBusy || posting}
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  if (files.length) {
+                    setPendingFiles((current) => [...current, ...files]);
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <label htmlFor={`ticket-quick-upload-${viewKey}`} className="ticket-conv-attach-btn">
+                <i className="pi pi-paperclip" />
+                <span>{uploadBusy ? 'Uploading…' : 'Attach media/file'}</span>
+              </label>
+              {canPostInternalNotes ? (
+                <label className="ticket-conv-internal-check">
+                  <Checkbox
+                    inputId={`ticket-internal-${viewKey}`}
+                    checked={internalNote}
+                    onChange={(e) => setInternalNote(Boolean(e.checked))}
+                  />
+                  <span>Internal note</span>
+                </label>
+              ) : null}
+            </div>
+            {pendingFiles.length ? (
+              <div className="ticket-conv-media-strip">
+                {pendingFiles.map((f, idx) => (
+                  <div key={`${f.name}-${idx}`} className="ticket-conv-media-pill">
+                    <i className={f.type.startsWith('image/') ? 'pi pi-image' : f.type.startsWith('video/') ? 'pi pi-video' : 'pi pi-file'} />
+                    <span>{f.name}</span>
+                    <button
+                      type="button"
+                      className="ticket-conv-media-remove"
+                      onClick={() => setPendingFiles((current) => current.filter((_, i) => i !== idx))}
+                      aria-label="Remove attachment"
+                    >
+                      <i className="pi pi-times" />
+                    </button>
                   </div>
                 ))}
-              </>
-            )}
-          </div>
-          <div className="ticket-conv-reply">
-            <textarea
-              id={`ticket-reply-${viewKey}`}
-              className="ticket-conv-reply-input"
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              placeholder="Write a reply…"
-              rows={3}
-              maxLength={8000}
-            />
-            {canPostInternalNotes ? (
-              <label className="ticket-conv-internal-check">
-                <Checkbox
-                  inputId={`ticket-internal-${viewKey}`}
-                  checked={internalNote}
-                  onChange={(e) => setInternalNote(Boolean(e.checked))}
-                />
-                <span>Internal note</span>
-              </label>
+              </div>
             ) : null}
+            <Editor
+              id={`ticket-reply-${viewKey}`}
+              value={newComment}
+              onTextChange={(e) => setNewComment((e.htmlValue ?? '').slice(0, 12000))}
+              className="ticket-conv-editor"
+              headerTemplate={conversationEditorHeaderTemplate}
+              placeholder="Write a reply…"
+            />
             <Button
               type="button"
               label={posting ? 'Sending…' : 'Post'}
               icon="pi pi-send"
-              disabled={posting || !newComment.trim()}
+              disabled={posting || (!plainTextFromHtml(newComment) && pendingFiles.length === 0)}
               onClick={() => void handlePostComment()}
             />
-          </div>
+          </motion.div>
         </TabPanel>
 
         <TabPanel header="Resolution">
@@ -306,32 +601,32 @@ export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThre
               <label className="ticket-form-label" htmlFor={`res-sum-${viewKey}`}>
                 Summary
               </label>
-              <InputTextarea
+              <Editor
                 id={`res-sum-${viewKey}`}
                 value={resolutionSummary}
-                onChange={(e) => setResolutionSummary(e.target.value)}
-                rows={3}
-                className="full-width ticket-form-textarea"
+                onTextChange={(e) => setResolutionSummary(e.htmlValue ?? '')}
+                className="ticket-rich-editor"
+                headerTemplate={resolutionEditorHeaderTemplate}
               />
               <label className="ticket-form-label" htmlFor={`res-root-${viewKey}`}>
                 Root cause
               </label>
-              <InputTextarea
+              <Editor
                 id={`res-root-${viewKey}`}
                 value={resolutionRootCause}
-                onChange={(e) => setResolutionRootCause(e.target.value)}
-                rows={3}
-                className="full-width ticket-form-textarea"
+                onTextChange={(e) => setResolutionRootCause(e.htmlValue ?? '')}
+                className="ticket-rich-editor"
+                headerTemplate={resolutionEditorHeaderTemplate}
               />
               <label className="ticket-form-label" htmlFor={`res-steps-${viewKey}`}>
                 Steps taken
               </label>
-              <InputTextarea
+              <Editor
                 id={`res-steps-${viewKey}`}
                 value={resolutionSteps}
-                onChange={(e) => setResolutionSteps(e.target.value)}
-                rows={4}
-                className="full-width ticket-form-textarea"
+                onTextChange={(e) => setResolutionSteps(e.htmlValue ?? '')}
+                className="ticket-rich-editor"
+                headerTemplate={resolutionEditorHeaderTemplate}
               />
               <div className="ticket-detail-actions ticket-resolution-actions">
                 <Button
@@ -421,6 +716,36 @@ export function TicketDetailTabs({ viewKey, ticket, canPostInternalNotes, onThre
           )}
         </TabPanel>
       </TabView>
+      <Dialog
+        header={mediaPreview?.name ?? 'Media preview'}
+        visible={Boolean(mediaPreview)}
+        onHide={() => setMediaPreview(null)}
+        className="ticket-media-preview-dialog"
+        headerClassName="ticket-media-preview-header"
+        modal
+        draggable={false}
+        resizable={false}
+        icons={
+          mediaPreview ? (
+            <Button
+              type="button"
+              label="Download"
+              icon="pi pi-download"
+              size="small"
+              text
+              onClick={() => {
+                void handleDownload(mediaPreview.attachmentId, mediaPreview.name);
+              }}
+            />
+          ) : undefined
+        }
+      >
+        {mediaPreview?.kind === 'image' ? (
+          <img className="ticket-media-preview-image" src={mediaPreview.url} alt={mediaPreview.name} />
+        ) : mediaPreview?.kind === 'video' ? (
+          <video className="ticket-media-preview-video" src={mediaPreview.url} controls autoPlay />
+        ) : null}
+      </Dialog>
     </div>
   );
 }

@@ -4,10 +4,13 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.core.db_migrations import (
+    apply_ticket_attachment_comment_migration,
     apply_customer_migrations,
     apply_event_migrations,
     apply_sprint_migrations,
+    apply_ticket_assignees_migration,
     apply_ticket_configuration_migrations,
+    apply_ticket_history_note_migration,
     apply_ticket_public_reference_migration,
 )
 from app.core.database import Base, SessionLocal, engine
@@ -44,6 +47,9 @@ def startup() -> None:
     apply_event_migrations(engine)
     apply_customer_migrations(engine)
     apply_ticket_public_reference_migration(engine)
+    apply_ticket_assignees_migration(engine)
+    apply_ticket_history_note_migration(engine)
+    apply_ticket_attachment_comment_migration(engine)
     apply_sprint_migrations(engine)
     with SessionLocal() as db:
         ensure_default_admin(db)

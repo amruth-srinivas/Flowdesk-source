@@ -3,7 +3,9 @@ import { Button } from 'primereact/button';
 import { Calendar } from 'primereact/calendar';
 import { Column } from 'primereact/column';
 import { DataTable } from 'primereact/datatable';
+import { Dialog } from 'primereact/dialog';
 import { Dropdown } from 'primereact/dropdown';
+import { MultiSelect } from 'primereact/multiselect';
 import { FloatLabel } from 'primereact/floatlabel';
 import { InputText } from 'primereact/inputtext';
 import { InputTextarea } from 'primereact/inputtextarea';
@@ -131,6 +133,14 @@ function parseDue(iso: string | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function formatAssigneeLabels(t: TicketRecord, userLookup: Map<string, string>): string {
+  if (t.assignee_names?.length) {
+    return t.assignee_names.join(', ');
+  }
+  const ids = t.assignee_ids ?? [];
+  return ids.map((id) => userLookup.get(id) ?? '').filter(Boolean).join(', ');
+}
+
 function filterByModule(
   tickets: TicketRecord[],
   module: string,
@@ -153,7 +163,7 @@ function filterByModule(
     case 'Open Tickets':
       return tickets.filter((t) => ['open', 'in_progress', 'in_review'].includes(t.status));
     case 'Assigned':
-      return tickets.filter((t) => Boolean(currentUserId && t.assignee_id === currentUserId));
+      return tickets.filter((t) => Boolean(currentUserId && (t.assignee_ids ?? []).includes(currentUserId)));
     case 'Resolved':
       return tickets.filter((t) => ['resolved', 'closed'].includes(t.status));
     default:
@@ -173,7 +183,7 @@ function applySearch(
   }
   return tickets.filter((t) => {
     const pn = projectLookup.get(t.project_id) ?? '';
-    const an = t.assignee_name ?? (t.assignee_id ? userLookup.get(t.assignee_id) ?? '' : '');
+    const an = formatAssigneeLabels(t, userLookup);
     const ref = displayTicketRef(t).toLowerCase();
     return (
       t.title.toLowerCase().includes(s) ||
@@ -204,7 +214,7 @@ type TicketManagementSectionProps = {
   onRefresh: () => void;
   onCreateTicket: (payload: TicketCreatePayload) => Promise<TicketRecord>;
   onUpdateTicket: (id: string, payload: TicketUpdatePayload) => Promise<TicketRecord>;
-  onPatchStatus: (id: string, status: TicketStatus) => Promise<TicketRecord>;
+  onPatchStatus: (id: string, status: TicketStatus, comment?: string | null) => Promise<TicketRecord>;
   /** Lead: full ticket CRUD. Member: assigned tickets, conversation & resolution. */
   ticketRole: 'lead' | 'member';
   canCreateTickets: boolean;
@@ -234,6 +244,7 @@ export function TicketManagementSection({
   canEditTickets,
 }: TicketManagementSectionProps) {
   type Panel = 'none' | 'create' | 'edit';
+  type StatusChangeSource = 'list' | 'kanban';
   const [panel, setPanel] = useState<Panel>('none');
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -244,13 +255,21 @@ export function TicketManagementSection({
   const [kanbanDropError, setKanbanDropError] = useState('');
   const [draggingTicketId, setDraggingTicketId] = useState<string | null>(null);
   const [leadListScope, setLeadListScope] = useState<LeadListScopeKey>('Open Tickets');
+  const [statusCommentOpen, setStatusCommentOpen] = useState(false);
+  const [statusCommentText, setStatusCommentText] = useState('');
+  const [statusCommentSaving, setStatusCommentSaving] = useState(false);
+  const [pendingStatusChange, setPendingStatusChange] = useState<{
+    ticketId: string;
+    nextStatus: TicketStatus;
+    source: StatusChangeSource;
+  } | null>(null);
 
   const [projectId, setProjectId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [ticketType, setTicketType] = useState<TicketType>('service_request');
   const [priority, setPriority] = useState<TicketPriority>('medium');
-  const [assigneeId, setAssigneeId] = useState<string | null>(null);
+  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<Date | null>(null);
 
@@ -316,6 +335,9 @@ export function TicketManagementSection({
     () => (editingId ? tickets.find((t) => t.id === editingId) ?? null : null),
     [tickets, editingId],
   );
+  const canEditTicketFields = Boolean(
+    canEditTickets && ticketRole === 'lead' && editingTicket && editingTicket.status === 'open',
+  );
 
   const selectedTableRow = useMemo(() => {
     if (panel !== 'edit' || !editingId) {
@@ -332,8 +354,8 @@ export function TicketManagementSection({
   }, [panel, projectId, ticketType, tickets, ticketConfigurations]);
 
   const projectOptions = useMemo(() => projects.map((p) => ({ label: p.name, value: p.id })), [projects]);
-  const assigneeOptions = useMemo(
-    () => [{ label: 'Unassigned', value: null }, ...assignableUsers.map((u) => ({ label: `${u.name} (${u.employee_id})`, value: u.id }))],
+  const assigneeMultiOptions = useMemo(
+    () => assignableUsers.map((u) => ({ label: `${u.name} (${u.employee_id})`, value: u.id })),
     [assignableUsers],
   );
   const customerOptions = useMemo(
@@ -347,7 +369,7 @@ export function TicketManagementSection({
     setDescription(row.description ?? '');
     setTicketType(row.type);
     setPriority(row.priority);
-    setAssigneeId(row.assignee_id);
+    setAssigneeIds(row.assignee_ids ?? []);
     setCustomerId(row.customer_id);
     setDueDate(parseDue(row.due_date));
     setFormError('');
@@ -377,7 +399,7 @@ export function TicketManagementSection({
       setDescription('');
       setTicketType('service_request');
       setPriority('medium');
-      setAssigneeId(null);
+      setAssigneeIds([]);
       setCustomerId(null);
       setDueDate(null);
       setFormError('');
@@ -401,6 +423,21 @@ export function TicketManagementSection({
     hydrateFromTicket(row);
   }
 
+  function openStatusCommentModal(ticketId: string, nextStatus: TicketStatus, source: StatusChangeSource) {
+    setPendingStatusChange({ ticketId, nextStatus, source });
+    setStatusCommentText('');
+    setStatusCommentOpen(true);
+  }
+
+  function closeStatusCommentModal() {
+    if (statusCommentSaving) {
+      return;
+    }
+    setStatusCommentOpen(false);
+    setStatusCommentText('');
+    setPendingStatusChange(null);
+  }
+
   async function submitCreate() {
     if (!projectId) {
       setFormError('Select a project.');
@@ -419,7 +456,7 @@ export function TicketManagementSection({
         type: ticketType,
         priority,
         project_id: projectId,
-        assigned_to: assigneeId,
+        assigned_to: assigneeIds,
         customer_id: customerId,
         due_date: dueDate ? toYmd(dueDate) : null,
       });
@@ -435,7 +472,7 @@ export function TicketManagementSection({
   }
 
   async function submitEdit() {
-    if (ticketRole !== 'lead' || !canEditTickets || !editingTicket) {
+    if (ticketRole !== 'lead' || !canEditTicketFields || !editingTicket) {
       return;
     }
     if (!projectId) {
@@ -455,7 +492,7 @@ export function TicketManagementSection({
         type: ticketType,
         priority,
         project_id: projectId,
-        assigned_to: assigneeId,
+        assigned_to: assigneeIds,
         customer_id: customerId,
         due_date: dueDate ? toYmd(dueDate) : null,
       });
@@ -473,13 +510,7 @@ export function TicketManagementSection({
     if (next === ticket.status) {
       return;
     }
-    setStatusBusy(ticket.id);
-    try {
-      await onPatchStatus(ticket.id, next);
-      onRefresh();
-    } finally {
-      setStatusBusy(null);
-    }
+    openStatusCommentModal(ticket.id, next, 'list');
   }
 
   async function handleKanbanDrop(status: TicketStatus, ticketId: string) {
@@ -493,17 +524,38 @@ export function TicketManagementSection({
       window.setTimeout(() => setKanbanDropError((cur) => (cur === msg ? '' : cur)), 7000);
       return;
     }
-    setKanbanBusy(ticketId);
     setKanbanDropError('');
+    openStatusCommentModal(ticketId, status, 'kanban');
+  }
+
+  async function confirmStatusChangeWithComment() {
+    if (!pendingStatusChange) {
+      return;
+    }
+    const { ticketId, nextStatus, source } = pendingStatusChange;
+    if (source === 'kanban') {
+      setKanbanBusy(ticketId);
+    } else {
+      setStatusBusy(ticketId);
+    }
+    setStatusCommentSaving(true);
     try {
-      await onPatchStatus(ticketId, status);
+      await onPatchStatus(ticketId, nextStatus, statusCommentText);
       onRefresh();
+      setStatusCommentOpen(false);
+      setStatusCommentText('');
+      setPendingStatusChange(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Could not update status';
       setKanbanDropError(msg);
       window.setTimeout(() => setKanbanDropError((cur) => (cur === msg ? '' : cur)), 8000);
     } finally {
-      setKanbanBusy(null);
+      setStatusCommentSaving(false);
+      if (source === 'kanban') {
+        setKanbanBusy(null);
+      } else {
+        setStatusBusy(null);
+      }
     }
   }
 
@@ -594,17 +646,20 @@ export function TicketManagementSection({
 
         <div className="ticket-form-row">
           <div className="ticket-form-field">
-            <label className="ticket-form-label">Assignee</label>
+            <label className="ticket-form-label">Assignees</label>
             <div className="p-inputgroup">
               <span className="p-inputgroup-addon">
-                <i className="pi pi-user" />
+                <i className="pi pi-users" />
               </span>
-              <Dropdown
-                value={assigneeId}
-                options={assigneeOptions}
-                onChange={(e) => setAssigneeId(e.value as string | null)}
+              <MultiSelect
+                value={assigneeIds}
+                options={assigneeMultiOptions}
+                onChange={(e) => setAssigneeIds((e.value as string[]) ?? [])}
+                display="chip"
                 className="full-width"
                 filter
+                placeholder="Select users"
+                maxSelectedLabels={3}
               />
             </div>
           </div>
@@ -804,13 +859,13 @@ export function TicketManagementSection({
               )}
               {isLeadCreateModule ? null : (
                 <Column
-                  header="Assignee"
+                  header="Assignees"
                   headerClassName="tickets-col-assignee"
                   bodyClassName="tickets-col-assignee"
                   style={{ minWidth: '140px', width: '168px' }}
                   body={(row: TicketRecord) => (
                     <span className="tickets-assignee-cell">
-                      {row.assignee_name ?? (row.assignee_id ? userLookup.get(row.assignee_id) : null) ?? '—'}
+                      {formatAssigneeLabels(row, userLookup) || '—'}
                     </span>
                   )}
                 />
@@ -954,8 +1009,8 @@ export function TicketManagementSection({
                           <p>{row.title}</p>
                           <div className="kanban-meta">
                             <small>{projectLookup.get(row.project_id) ?? '—'}</small>
-                            {row.assignee_id ? (
-                              <small>{row.assignee_name ?? userLookup.get(row.assignee_id)}</small>
+                            {row.assignee_ids?.length ? (
+                              <small>{formatAssigneeLabels(row, userLookup)}</small>
                             ) : (
                               <small className="muted">Unassigned</small>
                             )}
@@ -985,7 +1040,8 @@ export function TicketManagementSection({
                   {panel === 'create' ? (
                     <h2 className="tickets-detail-title">{detailTitle}</h2>
                   ) : editingTicket && ticketRole === 'lead' ? (
-                    <FloatLabel>
+                    <div className="tickets-detail-title-row">
+                      <span className="tickets-detail-title-ref">{displayTicketRef(editingTicket)}</span>
                       <InputText
                         id={`tf-title-edit-${viewKey}`}
                         className="full-width tickets-detail-title-input"
@@ -993,19 +1049,17 @@ export function TicketManagementSection({
                         onChange={(e) => setTitle(e.target.value)}
                         maxLength={300}
                       />
-                      <label htmlFor={`tf-title-edit-${viewKey}`}>Title</label>
-                    </FloatLabel>
+                    </div>
                   ) : editingTicket ? (
-                    <h2 className="tickets-detail-title">{editingTicket.title}</h2>
+                    <div className="tickets-detail-title-row">
+                      <span className="tickets-detail-title-ref">{displayTicketRef(editingTicket)}</span>
+                      <h2 className="tickets-detail-title">{editingTicket.title}</h2>
+                    </div>
                   ) : (
                     <h2 className="tickets-detail-title">{detailTitle}</h2>
                   )}
                   {panel === 'edit' && editingTicket ? (
                     <div className="ticket-meta-strip ticket-meta-strip--header">
-                      <span className="ticket-meta-chip">
-                        <i className="pi pi-ticket" /> {displayTicketRef(editingTicket)}
-                      </span>
-                      <span className="ticket-meta-chip muted">Internal #{editingTicket.ticket_number}</span>
                       <span className="ticket-meta-chip">
                         <i className="pi pi-folder" /> {projectLookup.get(editingTicket.project_id) ?? '—'}
                       </span>
@@ -1019,7 +1073,7 @@ export function TicketManagementSection({
               ) : editingTicket ? (
                 <div className="tickets-detail-scroll tickets-detail-scroll--edit">
                   <div className="tickets-detail-body">
-                    <aside className="ticket-detail-sidebar">
+                    <aside className={`ticket-detail-sidebar ${canEditTicketFields ? 'ticket-detail-sidebar--editable' : ''}`}>
                       {ticketRole === 'lead' ? (
                         <div className="ticket-detail-form">
                           <h3 className="ticket-sidebar-heading">Properties</h3>
@@ -1043,87 +1097,144 @@ export function TicketManagementSection({
                               <label className="ticket-form-label" htmlFor={`ts-project-${viewKey}`}>
                                 Project
                               </label>
-                              <Dropdown
-                                inputId={`ts-project-${viewKey}`}
-                                value={projectId}
-                                options={projectOptions}
-                                onChange={(e) => setProjectId(e.value as string)}
-                                className="full-width"
-                                filter
-                                disabled={!canEditTickets}
-                              />
+                              {canEditTicketFields ? (
+                                <Dropdown
+                                  inputId={`ts-project-${viewKey}`}
+                                  value={projectId}
+                                  options={projectOptions}
+                                  onChange={(e) => setProjectId(e.value as string)}
+                                  className="full-width"
+                                  filter
+                                />
+                              ) : (
+                                <div className="ticket-locked-field">{projectLookup.get(projectId ?? '') ?? '—'}</div>
+                              )}
                             </div>
                             <div className="ticket-form-field ticket-form-field--full">
                               <label className="ticket-form-label" htmlFor={`ts-desc-${viewKey}`}>
                                 Description
                               </label>
-                              <InputTextarea
-                                id={`ts-desc-${viewKey}`}
-                                value={description}
-                                onChange={(e) => setDescription(e.target.value)}
-                                rows={4}
-                                className="full-width ticket-form-textarea"
-                                disabled={!canEditTickets}
-                              />
+                              {canEditTicketFields ? (
+                                <InputTextarea
+                                  id={`ts-desc-${viewKey}`}
+                                  value={description}
+                                  onChange={(e) => setDescription(e.target.value)}
+                                  rows={4}
+                                  className="full-width ticket-form-textarea"
+                                />
+                              ) : (
+                                <div className="ticket-locked-field ticket-locked-field--multiline">{description?.trim() || '—'}</div>
+                              )}
                             </div>
                             <div className="ticket-form-row">
                               <div className="ticket-form-field">
                                 <label className="ticket-form-label">Type</label>
-                                <Dropdown
-                                  value={ticketType}
-                                  options={typeOptions}
-                                  onChange={(e) => setTicketType(e.value as TicketType)}
-                                  className="full-width"
-                                  disabled={!canEditTickets}
-                                />
+                                {canEditTicketFields ? (
+                                  <Dropdown
+                                    value={ticketType}
+                                    options={typeOptions}
+                                    onChange={(e) => setTicketType(e.value as TicketType)}
+                                    className="full-width"
+                                  />
+                                ) : (
+                                  <div className="ticket-locked-field">{humanize(ticketType)}</div>
+                                )}
                               </div>
                               <div className="ticket-form-field">
                                 <label className="ticket-form-label">Priority</label>
-                                <Dropdown
-                                  value={priority}
-                                  options={PRIORITIES}
-                                  onChange={(e) => setPriority(e.value)}
-                                  className="full-width"
-                                  disabled={!canEditTickets}
-                                />
+                                {canEditTicketFields ? (
+                                  <Dropdown
+                                    value={priority}
+                                    options={PRIORITIES}
+                                    onChange={(e) => setPriority(e.value)}
+                                    className="full-width"
+                                  />
+                                ) : (
+                                  <div className="ticket-locked-field">{humanize(priority)}</div>
+                                )}
                               </div>
                             </div>
                             <div className="ticket-form-row">
                               <div className="ticket-form-field">
-                                <label className="ticket-form-label">Assignee</label>
-                                <Dropdown
-                                  value={assigneeId}
-                                  options={assigneeOptions}
-                                  onChange={(e) => setAssigneeId(e.value as string | null)}
-                                  className="full-width"
-                                  filter
-                                  disabled={!canEditTickets}
-                                />
+                                <label className="ticket-form-label">Assignees</label>
+                                {canEditTicketFields ? (
+                                  <div className="ticket-assignees-editable">
+                                    <div className="p-inputgroup">
+                                      <span className="p-inputgroup-addon">
+                                        <i className="pi pi-users" />
+                                      </span>
+                                      <MultiSelect
+                                        value={assigneeIds}
+                                        options={assigneeMultiOptions}
+                                        onChange={(e) => setAssigneeIds((e.value as string[]) ?? [])}
+                                        className="full-width ticket-assignees-multiselect"
+                                        filter
+                                        placeholder="Select users"
+                                      />
+                                    </div>
+                                    {assigneeIds.length ? (
+                                      <div className="ticket-assignees-selected-list">
+                                        {assigneeIds.map((id) => (
+                                          <div key={id} className="ticket-assignees-selected-item">
+                                            <i className="pi pi-user" />
+                                            <span>{userLookup.get(id) ?? id}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : (
+                                  <div className="ticket-assignees-readonly">
+                                    {assigneeIds.length ? (
+                                      assigneeIds.map((id) => (
+                                        <div key={id} className="ticket-assignees-readonly-item">
+                                          <i className="pi pi-user" />
+                                          <span>{userLookup.get(id) ?? id}</span>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <span className="ticket-assignees-readonly-empty">Unassigned</span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                               <div className="ticket-form-field">
                                 <label className="ticket-form-label">Customer</label>
-                                <Dropdown
-                                  value={customerId}
-                                  options={customerOptions}
-                                  onChange={(e) => setCustomerId(e.value as string | null)}
-                                  className="full-width"
-                                  filter
-                                  disabled={!canEditTickets}
-                                />
+                                {canEditTicketFields ? (
+                                  <Dropdown
+                                    value={customerId}
+                                    options={customerOptions}
+                                    onChange={(e) => setCustomerId(e.value as string | null)}
+                                    className="full-width"
+                                    filter
+                                  />
+                                ) : (
+                                  <div className="ticket-locked-field">
+                                    {customers.find((c) => c.id === customerId)?.name ?? 'None'}
+                                  </div>
+                                )}
                               </div>
                             </div>
                             <div className="ticket-form-field ticket-form-field--full">
                               <label className="ticket-form-label">Due date</label>
-                              <Calendar
-                                value={dueDate}
-                                onChange={(e) => setDueDate((e.value as Date) || null)}
-                                showIcon
-                                className="full-width ticket-due-cal"
-                                disabled={!canEditTickets}
-                              />
+                              {canEditTicketFields ? (
+                                <Calendar
+                                  value={dueDate}
+                                  onChange={(e) => setDueDate((e.value as Date) || null)}
+                                  showIcon
+                                  className="full-width ticket-due-cal"
+                                />
+                              ) : (
+                                <div className="ticket-locked-field">{dueDate ? toYmd(dueDate) : '—'}</div>
+                              )}
                             </div>
+                            {!canEditTicketFields && editingTicket?.status !== 'open' ? (
+                              <small className="ticket-form-hint">
+                                Fields are locked after the ticket leaves Open. Only status can be changed.
+                              </small>
+                            ) : null}
                             {formError ? <small className="error-text">{formError}</small> : null}
-                            {canEditTickets ? (
+                            {canEditTicketFields ? (
                               <div className="ticket-detail-actions ticket-sidebar-actions">
                                 <Button
                                   type="button"
@@ -1154,8 +1265,8 @@ export function TicketManagementSection({
                                 />
                               )}
                             </dd>
-                            <dt>Assignee</dt>
-                            <dd>{editingTicket.assignee_name ?? (editingTicket.assignee_id ? userLookup.get(editingTicket.assignee_id) : '—')}</dd>
+                            <dt>Assignees</dt>
+                            <dd>{formatAssigneeLabels(editingTicket, userLookup) || '—'}</dd>
                             <dt>Project</dt>
                             <dd>{projectLookup.get(editingTicket.project_id) ?? '—'}</dd>
                             <dt>Type</dt>
@@ -1172,6 +1283,7 @@ export function TicketManagementSection({
                       <TicketDetailTabs
                         viewKey={`${viewKey}-tabs`}
                         ticket={editingTicket}
+                        currentUserId={currentUserId}
                         canPostInternalNotes={ticketRole === 'lead'}
                         onThreadChanged={onRefresh}
                       />
@@ -1186,6 +1298,49 @@ export function TicketManagementSection({
           </div>
         )}
       </div>
+      <Dialog
+        header="Status update comment"
+        visible={statusCommentOpen}
+        onHide={closeStatusCommentModal}
+        className="ticket-status-comment-dialog"
+        modal
+        draggable={false}
+        resizable={false}
+        dismissableMask={!statusCommentSaving}
+        closable={!statusCommentSaving}
+      >
+        <div className="ticket-status-comment-body">
+          <p className="ticket-status-comment-help">
+            Add a comment for this status change (optional).
+          </p>
+          <InputTextarea
+            value={statusCommentText}
+            onChange={(e) => setStatusCommentText(e.target.value)}
+            rows={4}
+            autoFocus
+            className="full-width ticket-form-textarea"
+            maxLength={2000}
+            placeholder="Example: Waiting for testing sign-off from TPREL team."
+            disabled={statusCommentSaving}
+          />
+          <div className="ticket-status-comment-actions">
+            <Button
+              type="button"
+              label="Cancel"
+              text
+              onClick={closeStatusCommentModal}
+              disabled={statusCommentSaving}
+            />
+            <Button
+              type="button"
+              label={statusCommentSaving ? 'Updating…' : 'Update status'}
+              icon="pi pi-check"
+              onClick={() => void confirmStatusChangeWithComment()}
+              disabled={statusCommentSaving}
+            />
+          </div>
+        </div>
+      </Dialog>
     </motion.article>
   );
 }

@@ -12,7 +12,7 @@ class TicketCreate(BaseModel):
     type: TicketType
     priority: TicketPriority = TicketPriority.MEDIUM
     project_id: UUID
-    assigned_to: UUID | None = None
+    assigned_to: list[UUID] = Field(default_factory=list)
     customer_id: UUID | None = None
     due_date: date | None = None
 
@@ -23,18 +23,19 @@ class TicketUpdate(BaseModel):
     type: TicketType | None = None
     priority: TicketPriority | None = None
     project_id: UUID | None = None
-    assigned_to: UUID | None = None
+    assigned_to: list[UUID] | None = None
     customer_id: UUID | None = None
     due_date: date | None = None
     sprint_id: UUID | None = None
 
 
 class TicketAssign(BaseModel):
-    assignee_id: UUID
+    assignee_ids: list[UUID] = Field(default_factory=list)
 
 
 class TicketStatusUpdate(BaseModel):
     status: TicketStatus
+    comment: str | None = Field(None, max_length=2000)
 
 
 class TicketResponse(BaseModel):
@@ -49,8 +50,8 @@ class TicketResponse(BaseModel):
     project_id: UUID
     created_by: UUID
     created_by_name: str | None = None
-    assignee_id: UUID | None
-    assignee_name: str | None = None
+    assignee_ids: list[UUID] = Field(default_factory=list)
+    assignee_names: list[str] = Field(default_factory=list)
     customer_id: UUID | None
     due_date: date | None = None
     closed_at: datetime | None = None
@@ -100,6 +101,7 @@ class TicketHistoryResponse(BaseModel):
     field_name: str
     old_value: str | None
     new_value: str | None
+    change_note: str | None = None
     created_at: datetime
 
     class Config:
@@ -124,6 +126,7 @@ class ResolutionResponse(BaseModel):
 
 class TicketAttachmentResponse(BaseModel):
     id: UUID
+    comment_id: UUID | None = None
     filename: str
     file_size_bytes: int
     mime_type: str

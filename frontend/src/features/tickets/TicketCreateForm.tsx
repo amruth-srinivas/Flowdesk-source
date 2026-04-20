@@ -1,6 +1,7 @@
 import { Button } from 'primereact/button';
 import { Calendar } from 'primereact/calendar';
 import { Dropdown } from 'primereact/dropdown';
+import { MultiSelect } from 'primereact/multiselect';
 import { FloatLabel } from 'primereact/floatlabel';
 import { InputText } from 'primereact/inputtext';
 import { InputTextarea } from 'primereact/inputtextarea';
@@ -86,7 +87,7 @@ export function TicketCreateForm({
   const [description, setDescription] = useState('');
   const [ticketType, setTicketType] = useState<TicketType>('service_request');
   const [priority, setPriority] = useState<TicketPriority>('medium');
-  const [assigneeId, setAssigneeId] = useState<string | null>(null);
+  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<Date | null>(null);
 
@@ -108,7 +109,7 @@ export function TicketCreateForm({
   const projectOptions = useMemo(() => projects.map((p) => ({ label: p.name, value: p.id })), [projects]);
 
   const assigneeOptions = useMemo(
-    () => [{ label: 'Unassigned', value: null }, ...assignableUsers.map((u) => ({ label: `${u.name} (${u.employee_id})`, value: u.id }))],
+    () => assignableUsers.map((u) => ({ label: `${u.name} (${u.employee_id})`, value: u.id })),
     [assignableUsers],
   );
 
@@ -131,7 +132,7 @@ export function TicketCreateForm({
     setDescription('');
     setTicketType('service_request');
     setPriority('medium');
-    setAssigneeId(null);
+    setAssigneeIds([]);
     setCustomerId(null);
     setDueDate(null);
     setFormError('');
@@ -154,7 +155,7 @@ export function TicketCreateForm({
         type: ticketType,
         priority,
         project_id: projectId,
-        assigned_to: assigneeId,
+        assigned_to: assigneeIds,
         customer_id: customerId,
         due_date: dueDate ? toYmd(dueDate) : null,
       });
@@ -248,17 +249,20 @@ export function TicketCreateForm({
 
         <div className="ticket-form-row">
           <div className="ticket-form-field">
-            <label className="ticket-form-label">Assignee</label>
+            <label className="ticket-form-label">Assignees</label>
             <div className="p-inputgroup">
               <span className="p-inputgroup-addon">
-                <i className="pi pi-user" />
+                <i className="pi pi-users" />
               </span>
-              <Dropdown
-                value={assigneeId}
+              <MultiSelect
+                value={assigneeIds}
                 options={assigneeOptions}
-                onChange={(e) => setAssigneeId(e.value as string | null)}
+                onChange={(e) => setAssigneeIds((e.value as string[]) ?? [])}
+                display="chip"
                 className="full-width"
                 filter
+                placeholder="Select users"
+                maxSelectedLabels={3}
               />
             </div>
           </div>

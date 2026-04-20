@@ -609,8 +609,8 @@ function App() {
     return updateTicketRequest(id, payload);
   }, []);
 
-  const handleLeadPatchTicketStatus = useCallback(async (id: string, status: TicketStatus) => {
-    return patchTicketStatusRequest(id, status);
+  const handleLeadPatchTicketStatus = useCallback(async (id: string, status: TicketStatus, comment?: string | null) => {
+    return patchTicketStatusRequest(id, status, comment);
   }, []);
 
   async function loadTicketConfigurations() {

@@ -124,6 +124,38 @@ def apply_event_migrations(engine: Engine) -> None:
         logger.warning("Event column migration failed: %s", exc)
 
 
+def _widen_customers_timezone_column(engine: Engine) -> None:
+    """Widen customers.timezone for values longer than legacy VARCHAR(60) (e.g. address pasted into timezone)."""
+    if engine.dialect.name != "postgresql":
+        return
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT c.character_maximum_length
+                    FROM information_schema.columns c
+                    WHERE c.table_schema = current_schema()
+                      AND c.table_name = 'customers'
+                      AND c.column_name = 'timezone'
+                    """
+                )
+            ).one_or_none()
+    except Exception as exc:
+        logger.warning("Could not read customers.timezone column info: %s", exc)
+        return
+    if row is None:
+        return
+    maxlen = row[0]
+    if maxlen is not None and maxlen < 255:
+        logger.info("Widening customers.timezone from VARCHAR(%s) to VARCHAR(255)", maxlen)
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE customers ALTER COLUMN timezone TYPE VARCHAR(255)"))
+        except Exception as exc:
+            logger.warning("Could not widen customers.timezone: %s", exc)
+
+
 def apply_customer_migrations(engine: Engine) -> None:
     """Add contacts and project_ids to customers when DB predates those columns (create_all does not alter tables)."""
     try:
@@ -170,6 +202,108 @@ def apply_customer_migrations(engine: Engine) -> None:
                     )
     except Exception as exc:
         logger.warning("Customer column migration failed: %s", exc)
+
+    _widen_customers_timezone_column(engine)
+
+
+def apply_ticket_assignees_migration(engine: Engine) -> None:
+    """Replace legacy tickets.assignee_id with UUID[] assignee_ids (multiple assignees)."""
+    if engine.dialect.name != "postgresql":
+        return
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for ticket assignee migration: %s", exc)
+        return
+
+    if "tickets" not in tables:
+        return
+
+    columns = {c["name"] for c in inspector.get_columns("tickets")}
+
+    try:
+        with engine.begin() as conn:
+            if "assignee_ids" not in columns:
+                logger.info("Adding tickets.assignee_ids column")
+                conn.execute(
+                    text(
+                        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assignee_ids UUID[] NOT NULL DEFAULT '{}'::uuid[]"
+                    )
+                )
+            if "assignee_id" in columns:
+                logger.info("Migrating tickets.assignee_id into assignee_ids; dropping assignee_id")
+                conn.execute(
+                    text(
+                        "UPDATE tickets SET assignee_ids = ARRAY[assignee_id]::uuid[] WHERE assignee_id IS NOT NULL"
+                    )
+                )
+                conn.execute(text("ALTER TABLE tickets DROP COLUMN assignee_id"))
+    except Exception as exc:
+        logger.warning("Ticket assignee migration failed: %s", exc)
+
+
+def apply_ticket_history_note_migration(engine: Engine) -> None:
+    """Add ticket_history.change_note to capture status-change comments."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for ticket history migration: %s", exc)
+        return
+
+    if "ticket_history" not in tables:
+        return
+
+    dialect = engine.dialect.name
+    columns = {col["name"] for col in inspector.get_columns("ticket_history")}
+    if "change_note" in columns:
+        return
+
+    logger.info("Adding ticket_history.change_note column")
+    try:
+        with engine.begin() as conn:
+            if dialect == "postgresql":
+                conn.execute(text("ALTER TABLE ticket_history ADD COLUMN IF NOT EXISTS change_note TEXT"))
+            else:
+                conn.execute(text("ALTER TABLE ticket_history ADD COLUMN change_note TEXT"))
+    except Exception as exc:
+        logger.warning("Ticket history migration failed: %s", exc)
+
+
+def apply_ticket_attachment_comment_migration(engine: Engine) -> None:
+    """Add ticket_attachments.comment_id so media can be linked to specific chat comments."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for ticket attachment migration: %s", exc)
+        return
+
+    if "ticket_attachments" not in tables or "ticket_comments" not in tables:
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("ticket_attachments")}
+    if "comment_id" in columns:
+        return
+
+    dialect = engine.dialect.name
+    logger.info("Adding ticket_attachments.comment_id column")
+    try:
+        with engine.begin() as conn:
+            if dialect == "postgresql":
+                conn.execute(
+                    text(
+                        "ALTER TABLE ticket_attachments ADD COLUMN IF NOT EXISTS comment_id UUID REFERENCES ticket_comments(id) ON DELETE SET NULL"
+                    )
+                )
+                conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_ticket_attachments_comment_id ON ticket_attachments (comment_id)")
+                )
+            else:
+                conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN comment_id UUID"))
+    except Exception as exc:
+        logger.warning("Ticket attachment migration failed: %s", exc)
 
 
 def apply_ticket_public_reference_migration(engine: Engine) -> None:

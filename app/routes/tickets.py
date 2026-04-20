@@ -2,12 +2,12 @@ import uuid
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.constants.enums import TicketType, UserRole
+from app.constants.enums import TicketStatus, TicketType, UserRole
 from app.core.config import settings
 from app.core.database import get_db
 from app.dependencies.auth import get_current_member
@@ -36,7 +36,7 @@ from app.schemas.tickets import (
     TicketStatusUpdate,
     TicketUpdate,
 )
-from app.services.ticket_service import assign_ticket, update_ticket_status
+from app.services.ticket_service import assign_ticket, dedupe_assignee_ids, update_ticket_status
 from app.utils.access import accessible_project_ids
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
@@ -93,10 +93,12 @@ def _resolution_to_response(db: Session, r: Resolution) -> ResolutionResponse:
 
 
 def _ticket_to_response(db: Session, ticket: Ticket) -> TicketResponse:
+    ids = list(ticket.assignee_ids or [])
+    names = [_user_name(db, uid) for uid in ids]
     base = TicketResponse.model_validate(ticket)
     return base.model_copy(
         update={
-            "assignee_name": _user_name(db, ticket.assignee_id) if ticket.assignee_id else None,
+            "assignee_names": names,
             "created_by_name": _user_name(db, ticket.created_by),
         }
     )
@@ -115,7 +117,7 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db), user=Dep
         type=payload.type,
         priority=payload.priority,
         project_id=payload.project_id,
-        assignee_id=payload.assigned_to,
+        assignee_ids=dedupe_assignee_ids(payload.assigned_to or []),
         customer_id=payload.customer_id,
         due_date=payload.due_date,
         created_by=user.id,
@@ -141,6 +143,11 @@ def update_ticket(
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
+    if ticket.status != TicketStatus.OPEN:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ticket fields are locked after it moves from Open. Only status can be updated.",
+        )
 
     data = payload.model_dump(exclude_unset=True)
     if "project_id" in data and payload.project_id is not None:
@@ -155,7 +162,7 @@ def update_ticket(
     if "priority" in data and payload.priority is not None:
         ticket.priority = payload.priority
     if "assigned_to" in data:
-        ticket.assignee_id = payload.assigned_to
+        ticket.assignee_ids = dedupe_assignee_ids(payload.assigned_to or [])
     if "customer_id" in data:
         ticket.customer_id = payload.customer_id
     if "due_date" in data:
@@ -186,7 +193,7 @@ def assign(ticket_id: str, payload: TicketAssign, db: Session = Depends(get_db),
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
-    updated = assign_ticket(db, ticket, payload.assignee_id, user.id)
+    updated = assign_ticket(db, ticket, payload.assignee_ids, user.id)
     return _ticket_to_response(db, updated)
 
 
@@ -196,7 +203,7 @@ def update_status(ticket_id: str, payload: TicketStatusUpdate, db: Session = Dep
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
-    updated = update_ticket_status(db, ticket, payload.status, user)
+    updated = update_ticket_status(db, ticket, payload.status, user, payload.comment)
     return _ticket_to_response(db, updated)
 
 
@@ -213,7 +220,7 @@ def list_tickets(
         allowed = accessible_project_ids(db, user)
         rows = [t for t in all_tickets if t.project_id in allowed]
     if assignee_me:
-        rows = [t for t in rows if t.assignee_id == user.id]
+        rows = [t for t in rows if user.id in (t.assignee_ids or [])]
     return [_ticket_to_response(db, t) for t in rows]
 
 
@@ -302,6 +309,7 @@ def list_history(ticket_id: str, db: Session = Depends(get_db), user=Depends(get
             field_name=h.field_name,
             old_value=h.old_value,
             new_value=h.new_value,
+            change_note=h.change_note,
             created_at=h.created_at,
         )
         for h in rows
@@ -360,6 +368,7 @@ def list_attachments(ticket_id: str, db: Session = Depends(get_db), user=Depends
     return [
         TicketAttachmentResponse(
             id=a.id,
+            comment_id=a.comment_id,
             filename=a.filename,
             file_size_bytes=a.file_size_bytes,
             mime_type=a.mime_type,
@@ -376,12 +385,17 @@ async def upload_attachment(
     ticket_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_member),
+    comment_id: UUID | None = Form(None),
     file: UploadFile = File(...),
 ):
     ticket = db.get(Ticket, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
+    if comment_id is not None:
+        comment = db.get(TicketComment, comment_id)
+        if not comment or comment.ticket_id != ticket.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found for this ticket")
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing filename")
     orig = Path(file.filename).name
@@ -398,6 +412,7 @@ async def upload_attachment(
     dest_path.write_bytes(content)
     row = TicketAttachment(
         ticket_id=ticket.id,
+        comment_id=comment_id,
         uploaded_by=user.id,
         filename=orig[:300],
         file_path=rel,
@@ -409,6 +424,7 @@ async def upload_attachment(
     db.refresh(row)
     return TicketAttachmentResponse(
         id=row.id,
+        comment_id=row.comment_id,
         filename=row.filename,
         file_size_bytes=row.file_size_bytes,
         mime_type=row.mime_type,
