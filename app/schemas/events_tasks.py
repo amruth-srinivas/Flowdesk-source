@@ -21,6 +21,20 @@ class MilestoneResponse(BaseModel):
         from_attributes = True
 
 
+class EventAttachmentResponse(BaseModel):
+    id: UUID
+    event_id: UUID
+    filename: str
+    file_size_bytes: int
+    mime_type: str
+    uploaded_by: UUID
+    uploader_name: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class EventCreate(BaseModel):
     project_id: UUID
     title: str = Field(..., min_length=1, max_length=200)
@@ -60,6 +74,7 @@ class EventResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     milestones: list[MilestoneResponse]
+    attachments: list[EventAttachmentResponse]
 
     class Config:
         from_attributes = True

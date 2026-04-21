@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.constants.enums import TicketStatus, UserRole
-from app.models import Approval, Resolution, Ticket, TicketHistory
+from app.models import Resolution, Ticket, TicketHistory
 
 
 def dedupe_assignee_ids(assignee_ids: list[UUID]) -> list[UUID]:
@@ -63,16 +63,13 @@ def update_ticket_status(
 
     if ticket.status == TicketStatus.RESOLVED and new_status == TicketStatus.CLOSED and user.role in {UserRole.ADMIN, UserRole.LEAD}:
         resolution = db.execute(select(Resolution).where(Resolution.ticket_id == ticket.id)).scalar_one_or_none()
-        if not resolution:
+        if not resolution or not (resolution.summary or "").strip():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ticket must have a resolution before closing")
-        approval = db.execute(select(Approval).where(Approval.resolution_id == resolution.id)).scalar_one_or_none()
-        if not approval or approval.status.value != "approved":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Resolution must be approved before closing")
 
     old_status = ticket.status.value
     ticket.status = new_status
     if new_status == TicketStatus.CLOSED:
-        ticket.closed_at = datetime.utcnow()
+        ticket.closed_at = datetime.now(timezone.utc)
     note = comment.strip() if comment else None
     db.add(
         TicketHistory(

@@ -9,7 +9,14 @@ from app.constants.enums import UserRole
 from app.core.database import get_db
 from app.dependencies.auth import get_current_lead, get_current_member
 from app.models import Sprint, Ticket, User
-from app.schemas.sprints import SprintAnalyticsResponse, SprintCreate, SprintResponse, SprintUpdate
+from app.schemas.sprints import (
+    SprintActiveMember,
+    SprintAnalyticsResponse,
+    SprintCreate,
+    SprintResponse,
+    SprintTicketBrief,
+    SprintUpdate,
+)
 from app.utils.access import accessible_project_ids
 
 router = APIRouter(prefix="/sprints", tags=["sprints"])
@@ -129,6 +136,48 @@ def sprint_analytics(sprint_id: UUID, db: Session = Depends(get_db), user: User 
     remaining = total - done
     pct = (done / total * 100.0) if total else 0.0
 
+    all_assignee_ids: set[UUID] = set()
+    for t in tickets:
+        for aid in t.assignee_ids or []:
+            all_assignee_ids.add(aid)
+
+    user_map: dict[UUID, str] = {}
+    if all_assignee_ids:
+        users = db.execute(select(User).where(User.id.in_(all_assignee_ids))).scalars().all()
+        for u in users:
+            user_map[u.id] = u.name or "Unknown"
+
+    brief_list: list[SprintTicketBrief] = []
+    member_by_id: dict[UUID, str] = {}
+    for t in tickets:
+        st = t.status.value if hasattr(t.status, "value") else str(t.status)
+        pr = t.priority.value if hasattr(t.priority, "value") else str(t.priority)
+        names = [user_map[aid] for aid in (t.assignee_ids or []) if aid in user_map]
+        brief_list.append(
+            SprintTicketBrief(
+                id=t.id,
+                public_reference=t.public_reference,
+                title=t.title,
+                status=st,
+                priority=pr,
+                assignee_names=names,
+            )
+        )
+        for aid in t.assignee_ids or []:
+            if aid in user_map:
+                member_by_id[aid] = user_map[aid]
+
+    brief_list.sort(
+        key=lambda b: (
+            (b.public_reference or "").lower(),
+            b.title.lower(),
+        )
+    )
+    active_members = [
+        SprintActiveMember(id=uid, name=name)
+        for uid, name in sorted(member_by_id.items(), key=lambda x: x[1].lower())
+    ]
+
     return SprintAnalyticsResponse(
         sprint_id=row.id,
         title=row.title,
@@ -137,6 +186,8 @@ def sprint_analytics(sprint_id: UUID, db: Session = Depends(get_db), user: User 
         tickets_done=done,
         tickets_remaining=remaining,
         progress_percent=round(pct, 1),
+        tickets=brief_list,
+        active_members=active_members,
     )
 
 

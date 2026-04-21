@@ -52,6 +52,8 @@ type CalendarEventFormProps = {
   eventId?: string;
   /** When mode is edit, used to populate fields. */
   initialEvent?: CalendarEventRecord | null;
+  /** Create mode: pre-fill start date/time (e.g. day selected on the calendar). */
+  initialStartAt?: Date | null;
 };
 
 export function CalendarEventForm({
@@ -62,6 +64,7 @@ export function CalendarEventForm({
   mode = 'create',
   eventId,
   initialEvent,
+  initialStartAt,
 }: CalendarEventFormProps) {
   const [projectId, setProjectId] = useState<string | null>(projects[0]?.id ?? null);
   const [title, setTitle] = useState('');
@@ -69,6 +72,11 @@ export function CalendarEventForm({
   const [eventType, setEventType] = useState('meeting');
   const [status, setStatus] = useState('planning');
   const [startAt, setStartAt] = useState<Date | null>(() => {
+    if (initialStartAt) {
+      const d = new Date(initialStartAt);
+      d.setHours(9, 0, 0, 0);
+      return d;
+    }
     const d = new Date();
     d.setMinutes(0, 0, 0);
     return d;

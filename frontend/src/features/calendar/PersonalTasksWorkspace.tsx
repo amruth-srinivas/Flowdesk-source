@@ -766,11 +766,6 @@ export function PersonalTasksWorkspace({ viewKey }: PersonalTasksWorkspaceProps)
           animate="show"
         >
           <h3 className="calendar-kicker">Personal</h3>
-          <h1 className="calendar-title">Tasks</h1>
-          <p className="calendar-sub personal-tasks-sub">
-            Your own daily list — separate from scheduled activities and tickets. Titles are enough; add notes only when
-            you need them.
-          </p>
           <div className="personal-tasks-view-toggle-wrap">
             <div className="personal-tasks-view-toggle" role="group" aria-label="View mode">
               <Button

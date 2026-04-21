@@ -45,7 +45,6 @@ import {
   patchEventMilestoneRequest,
 } from './lib/api';
 import type { BackendRole, CalendarEventRecord, UserRecord } from './lib/api';
-import { GlobalSearchBar } from './components/layout/GlobalSearchBar';
 import { ModuleSidebar } from './components/layout/ModuleSidebar';
 import { TopHeader } from './components/layout/TopHeader';
 import { CustomerManagementSection } from './features/customer-management/CustomerManagementSection';
@@ -62,6 +61,7 @@ import { TicketsPage } from './pages/TicketsPage';
 import { KnowledgeBasePage } from './pages/KnowledgeBase';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectsPage } from './pages/Projects';
+import { KbDocumentsWorkspace } from './features/kb/KbDocumentsWorkspace';
 
 type Role = 'admin' | 'teamLead' | 'teamMember';
 type TopPage = 'projects' | 'knowledgeBase' | 'calendar' | 'tickets' | 'kb' | 'sprints';
@@ -90,13 +90,13 @@ const roleTopNav: Record<Role, NavItem[]> = {
   teamLead: [
     { id: 'sprints', label: 'Sprints', icon: <Layers size={17} />, modules: ['Configuration', 'Monitoring'] },
     { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['Create Ticket', 'Tickets'] },
-    { id: 'kb', label: 'KB', icon: <BookOpenText size={17} />, modules: ['Search', 'Articles', 'Guidelines'] },
+    { id: 'kb', label: 'Knowledge Base', icon: <BookOpenText size={17} />, modules: ['Documents'] },
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View', 'Personal Tasks'] },
   ],
   teamMember: [
     { id: 'sprints', label: 'Sprints', icon: <Layers size={17} />, modules: [] },
     { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['My Tickets', 'History'] },
-    { id: 'kb', label: 'KB', icon: <BookOpenText size={17} />, modules: ['Search', 'Articles', 'FAQs'] },
+    { id: 'kb', label: 'Knowledge Base', icon: <BookOpenText size={17} />, modules: ['Documents'] },
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View', 'Personal Tasks'] },
   ],
 };
@@ -203,6 +203,7 @@ function App() {
   const [role, setRole] = useState<Role>('admin');
   const [activePage, setActivePage] = useState<TopPage>('projects');
   const [activeModule, setActiveModule] = useState('');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [userManagementError, setUserManagementError] = useState('');
@@ -257,7 +258,7 @@ function App() {
   const [tickets, setTickets] = useState<TicketRecord[]>([]);
   const [isTicketsLoading, setIsTicketsLoading] = useState(false);
   const [ticketsError, setTicketsError] = useState('');
-  const [ticketSearch, setTicketSearch] = useState('');
+  const [ticketSearch] = useState('');
   const [ticketViewMode, setTicketViewMode] = useState<'list' | 'kanban'>('list');
   const [assignableUsers, setAssignableUsers] = useState<UserRecord[]>([]);
   const [sessionProfile, setSessionProfile] = useState<UserRecord | null>(null);
@@ -277,14 +278,6 @@ function App() {
     }
     return modules[0];
   }, [activeModule, selectedPage.modules]);
-  const isUserManagementView = role === 'admin' && selectedPage.id === 'projects' && currentModule === 'User Management';
-  const isCustomerView = role === 'admin' && selectedPage.id === 'knowledgeBase' && currentModule === 'Customers';
-  const isConfigurationView = role === 'admin' && selectedPage.id === 'knowledgeBase' && currentModule === 'Configuration';
-  const isTicketsView =
-    (role === 'teamLead' || role === 'teamMember') && selectedPage.id === 'tickets';
-  const isSprintsView =
-    (role === 'teamLead' || role === 'teamMember') && selectedPage.id === 'sprints';
-
   const filteredUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
     if (!query) {
@@ -350,8 +343,15 @@ function App() {
     () => users.find((user) => user.employee_id === employeeId) ?? null,
     [employeeId, users],
   );
-  const currentUserName = currentUserRecord?.name ?? (employeeId === '1111' ? 'System Admin' : 'Current User');
-  const currentUserIdentifier = currentUserRecord?.employee_id ?? employeeId ?? 'Not available';
+  const currentUserName =
+    sessionProfile?.name ??
+    currentUserRecord?.name ??
+    (employeeId === '1111' ? 'System Admin' : employeeId || 'Current User');
+  const currentUserIdentifier =
+    sessionProfile?.employee_id ??
+    currentUserRecord?.employee_id ??
+    employeeId ??
+    'Not available';
   const currentUserAvatar = currentUserName
     .split(' ')
     .filter(Boolean)
@@ -1177,13 +1177,15 @@ function App() {
     );
   }
 
+  const canManageCalendarEvents = role === 'admin' || role === 'teamLead';
+
   function renderCalendarWorkspace() {
     return (
       <CalendarWorkspace
         viewKey={`${selectedPage.id}-${currentModule}`}
         events={calendarEvents}
         isLoading={isCalendarEventsLoading}
-        isAdmin={role === 'admin'}
+        canManageEvents={canManageCalendarEvents}
         projects={projects}
         onToggleMilestone={handleCalendarMilestoneToggle}
         onMonthRangeChange={handleCalendarMonthRange}
@@ -1198,7 +1200,7 @@ function App() {
         viewKey={`${selectedPage.id}-${currentModule}`}
         rows={allCalendarEvents}
         isLoading={isAllCalendarEventsLoading}
-        isAdmin={role === 'admin'}
+        canManageEvents={canManageCalendarEvents}
         projects={projects}
         onActivitySaved={refreshCalendarEvents}
       />
@@ -1348,6 +1350,12 @@ function App() {
       return renderDefaultContent();
     }
 
+    if (selectedPage.id === 'kb' && (role === 'teamLead' || role === 'teamMember') && currentModule === 'Documents') {
+      return (
+        <KbDocumentsWorkspace viewKey={`${selectedPage.id}-${currentModule}`} projects={projects} />
+      );
+    }
+
     return renderDefaultContent();
   }
 
@@ -1389,51 +1397,20 @@ function App() {
               onLogout={logout}
             />
 
-            <section className="dashboard-body">
+            <section
+              className={`dashboard-body ${selectedPage.modules.length > 0 && isSidebarCollapsed ? 'dashboard-body--sidebar-collapsed' : ''}`}
+            >
               {selectedPage.modules.length > 0 ? (
                 <ModuleSidebar
                   pageLabel={selectedPage.label}
                   modules={selectedPage.modules}
                   activeModule={activeModule}
                   onSelectModule={setActiveModule}
+                  isCollapsed={isSidebarCollapsed}
+                  onToggleCollapse={() => setIsSidebarCollapsed((previous) => !previous)}
                 />
               ) : null}
               <section className="content-panel">
-                <GlobalSearchBar
-                  placeholder={
-                    isUserManagementView
-                      ? 'Search users by name, email, ID, or role...'
-                      : isCustomerView
-                        ? 'Search customers by name, company, email, or tags...'
-                        : isConfigurationView
-                          ? 'Search ticket configuration…'
-                          : isTicketsView
-                            ? 'Search tickets by title, number, project, or assignee...'
-                            : isSprintsView
-                              ? role === 'teamMember'
-                                ? 'Use Tickets to search or update work items.'
-                                : 'Use Tickets to search work items; sprint analytics are in Monitoring.'
-                              : 'Search projects, articles, events...'
-                  }
-                  value={
-                    isUserManagementView
-                      ? userSearch
-                      : isCustomerView
-                        ? customerSearch
-                        : isTicketsView
-                          ? ticketSearch
-                          : ''
-                  }
-                  onChange={(value) => {
-                    if (isUserManagementView) {
-                      setUserSearch(value);
-                    } else if (isCustomerView) {
-                      setCustomerSearch(value);
-                    } else if (isTicketsView) {
-                      setTicketSearch(value);
-                    }
-                  }}
-                />
                 {renderActivePageContent()}
               </section>
             </section>

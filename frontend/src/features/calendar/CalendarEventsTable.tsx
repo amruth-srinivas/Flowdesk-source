@@ -45,7 +45,7 @@ type CalendarEventsTableProps = {
   viewKey: string;
   rows: CalendarEventRecord[];
   isLoading: boolean;
-  isAdmin: boolean;
+  canManageEvents: boolean;
   projects: ProjectRecord[];
   onActivitySaved: () => void;
 };
@@ -54,7 +54,7 @@ export function CalendarEventsTable({
   viewKey,
   rows,
   isLoading,
-  isAdmin,
+  canManageEvents,
   projects,
   onActivitySaved,
 }: CalendarEventsTableProps) {
@@ -89,9 +89,12 @@ export function CalendarEventsTable({
           sortField="start_at"
           sortOrder={-1}
           removableSort
-          className="user-table"
-          emptyMessage="No activities yet. Admins can add them from the Calendar module."
+          className="user-table calendar-events-activities-table"
+          emptyMessage="No activities yet. Team leads and admins can add them from the Calendar module."
           dataKey="id"
+          rowClassName={(row: CalendarEventRecord) =>
+            row.status === 'completed' ? 'calendar-events-row-completed' : ''
+          }
         >
           <Column
             field="title"
@@ -148,32 +151,38 @@ export function CalendarEventsTable({
             alignHeader="center"
             body={(row: CalendarEventRecord) => row.milestones.length}
           />
-          {isAdmin ? (
+          {canManageEvents ? (
             <Column
               header="Actions"
               align="center"
               alignHeader="center"
               style={{ width: '100px' }}
-              body={(row: CalendarEventRecord) => (
-                <Button
-                  type="button"
-                  icon="pi pi-pencil"
-                  rounded
-                  text
-                  severity="secondary"
-                  aria-label={`Edit ${row.title}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setActivityToEdit(row);
-                  }}
-                />
-              )}
+              body={(row: CalendarEventRecord) =>
+                row.status === 'completed' ? (
+                  <span className="calendar-events-actions-placeholder" aria-hidden>
+                    —
+                  </span>
+                ) : (
+                  <Button
+                    type="button"
+                    icon="pi pi-pencil"
+                    rounded
+                    text
+                    severity="secondary"
+                    aria-label={`Edit ${row.title}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setActivityToEdit(row);
+                    }}
+                  />
+                )
+              }
             />
           ) : null}
         </DataTable>
       </div>
 
-      {isAdmin ? (
+      {canManageEvents ? (
         <Dialog
           header="Edit activity"
           visible={activityToEdit !== null}

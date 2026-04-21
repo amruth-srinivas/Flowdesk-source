@@ -331,6 +331,17 @@ export type EventMilestoneRecord = {
   sort_order: number;
 };
 
+export type EventAttachmentRecord = {
+  id: string;
+  event_id: string;
+  filename: string;
+  file_size_bytes: number;
+  mime_type: string;
+  uploaded_by: string;
+  uploader_name: string;
+  created_at: string;
+};
+
 export type CalendarEventRecord = {
   id: string;
   project_id: string | null;
@@ -346,6 +357,7 @@ export type CalendarEventRecord = {
   created_at: string;
   updated_at: string;
   milestones: EventMilestoneRecord[];
+  attachments: EventAttachmentRecord[];
 };
 
 export type CalendarEventCreatePayload = {
@@ -420,6 +432,224 @@ export async function patchEventMilestoneRequest(
     body: JSON.stringify({ completed }),
   });
   return parseResponse<CalendarEventRecord>(response);
+}
+
+export function eventAttachmentFileUrl(eventId: string, attachmentId: string): string {
+  return `${API_BASE_URL}/work/events/${eventId}/attachments/${attachmentId}/file`;
+}
+
+export async function uploadEventAttachmentRequest(eventId: string, file: File): Promise<CalendarEventRecord> {
+  const token = localStorage.getItem('accessToken');
+  const body = new FormData();
+  body.append('file', file);
+  const response = await fetch(`${API_BASE_URL}/work/events/${eventId}/attachments`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body,
+  });
+  return parseResponse<CalendarEventRecord>(response);
+}
+
+export async function deleteEventAttachmentRequest(eventId: string, attachmentId: string): Promise<CalendarEventRecord> {
+  const response = await fetch(`${API_BASE_URL}/work/events/${eventId}/attachments/${attachmentId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<CalendarEventRecord>(response);
+}
+
+export async function getEventAttachmentBlobRequest(eventId: string, attachmentId: string): Promise<Blob> {
+  const token = localStorage.getItem('accessToken');
+  const response = await fetch(eventAttachmentFileUrl(eventId, attachmentId), {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    const detail = errorBody?.detail;
+    throw new Error(typeof detail === 'string' ? detail : 'Could not load file');
+  }
+  return response.blob();
+}
+
+export async function downloadEventAttachmentFile(
+  eventId: string,
+  attachmentId: string,
+  filename: string,
+): Promise<void> {
+  const token = localStorage.getItem('accessToken');
+  const response = await fetch(eventAttachmentFileUrl(eventId, attachmentId), {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    const detail = errorBody?.detail;
+    throw new Error(typeof detail === 'string' ? detail : 'Download failed');
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Team Lead KB — project-scoped folders and files */
+export type ProjectDocumentFolderRecord = {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  name: string;
+  created_by: string;
+  created_at: string;
+};
+
+export type ProjectDocumentFileRecord = {
+  id: string;
+  project_id: string;
+  folder_id: string | null;
+  filename: string;
+  file_size_bytes: number;
+  mime_type: string;
+  uploaded_by: string;
+  uploader_name: string;
+  created_at: string;
+};
+
+export async function listProjectDocumentFoldersRequest(
+  projectId: string,
+  parentId?: string | null,
+): Promise<ProjectDocumentFolderRecord[]> {
+  const q = new URLSearchParams();
+  if (parentId) {
+    q.set('parent_id', parentId);
+  }
+  const query = q.toString();
+  const response = await fetch(
+    `${API_BASE_URL}/work/projects/${projectId}/document-folders${query ? `?${query}` : ''}`,
+    { headers: getAuthHeaders() },
+  );
+  return parseResponse<ProjectDocumentFolderRecord[]>(response);
+}
+
+export async function createProjectDocumentFolderRequest(
+  projectId: string,
+  payload: { name: string; parent_id?: string | null },
+): Promise<ProjectDocumentFolderRecord> {
+  const response = await fetch(`${API_BASE_URL}/work/projects/${projectId}/document-folders`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<ProjectDocumentFolderRecord>(response);
+}
+
+export async function deleteProjectDocumentFolderRequest(projectId: string, folderId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/work/projects/${projectId}/document-folders/${folderId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
+}
+
+export async function listProjectDocumentFilesRequest(
+  projectId: string,
+  folderId?: string | null,
+): Promise<ProjectDocumentFileRecord[]> {
+  const q = new URLSearchParams();
+  if (folderId) {
+    q.set('folder_id', folderId);
+  }
+  const query = q.toString();
+  const response = await fetch(
+    `${API_BASE_URL}/work/projects/${projectId}/document-files${query ? `?${query}` : ''}`,
+    { headers: getAuthHeaders() },
+  );
+  return parseResponse<ProjectDocumentFileRecord[]>(response);
+}
+
+export function projectDocumentFileDownloadUrl(projectId: string, fileId: string): string {
+  return `${API_BASE_URL}/work/projects/${projectId}/document-files/${fileId}/file`;
+}
+
+export async function getProjectDocumentBlobRequest(projectId: string, fileId: string): Promise<Blob> {
+  const token = localStorage.getItem('accessToken');
+  const response = await fetch(projectDocumentFileDownloadUrl(projectId, fileId), {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    const detail = errorBody?.detail;
+    throw new Error(typeof detail === 'string' ? detail : 'Could not load file');
+  }
+  return response.blob();
+}
+
+export async function downloadProjectDocumentFile(
+  projectId: string,
+  fileId: string,
+  filename: string,
+): Promise<void> {
+  const token = localStorage.getItem('accessToken');
+  const response = await fetch(projectDocumentFileDownloadUrl(projectId, fileId), {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    const detail = errorBody?.detail;
+    throw new Error(typeof detail === 'string' ? detail : 'Download failed');
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function uploadProjectDocumentFileRequest(
+  projectId: string,
+  file: File,
+  folderId?: string | null,
+): Promise<ProjectDocumentFileRecord> {
+  const token = localStorage.getItem('accessToken');
+  const q = new URLSearchParams();
+  if (folderId) {
+    q.set('folder_id', folderId);
+  }
+  const query = q.toString();
+  const body = new FormData();
+  body.append('file', file);
+  const response = await fetch(
+    `${API_BASE_URL}/work/projects/${projectId}/document-files${query ? `?${query}` : ''}`,
+    {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body,
+    },
+  );
+  return parseResponse<ProjectDocumentFileRecord>(response);
+}
+
+export async function deleteProjectDocumentFileRequest(projectId: string, fileId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/work/projects/${projectId}/document-files/${fileId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
 }
 
 /** Per-user day tasks — not calendar events or ticket tasks. */
@@ -836,6 +1066,20 @@ export type SprintUpdatePayload = {
   status?: string;
 };
 
+export type SprintTicketBrief = {
+  id: string;
+  public_reference: string | null;
+  title: string;
+  status: string;
+  priority: string;
+  assignee_names: string[];
+};
+
+export type SprintActiveMember = {
+  id: string;
+  name: string;
+};
+
 export type SprintAnalyticsRecord = {
   sprint_id: string;
   title: string;
@@ -844,6 +1088,8 @@ export type SprintAnalyticsRecord = {
   tickets_done: number;
   tickets_remaining: number;
   progress_percent: number;
+  tickets: SprintTicketBrief[];
+  active_members: SprintActiveMember[];
 };
 
 export async function getSprintsRequest(): Promise<SprintRecord[]> {

@@ -14,7 +14,7 @@ from app.core.db_migrations import (
     apply_ticket_public_reference_migration,
 )
 from app.core.database import Base, SessionLocal, engine
-from app.routes import auth, customers, events_tasks, kb, personal_tasks, projects, sprints, ticket_configuration, tickets, users
+from app.routes import auth, customers, events_tasks, kb, personal_tasks, project_documents, projects, sprints, ticket_configuration, tickets, users
 from app.services.auth_service import ensure_default_admin
 
 logging.basicConfig(level=settings.log_level)
@@ -25,6 +25,7 @@ app = FastAPI(title=settings.app_name, debug=settings.debug)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(projects.router)
+app.include_router(project_documents.router)
 app.include_router(customers.router)
 app.include_router(ticket_configuration.router)
 app.include_router(tickets.router)

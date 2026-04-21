@@ -11,7 +11,8 @@ import { InputText } from 'primereact/inputtext';
 import { InputTextarea } from 'primereact/inputtextarea';
 import { SelectButton } from 'primereact/selectbutton';
 import { Tag } from 'primereact/tag';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Toast } from 'primereact/toast';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TicketDetailTabs } from './TicketDetailTabs';
 import type {
   CustomerRecord,
@@ -121,6 +122,10 @@ function statusSeverity(s: TicketStatus): 'success' | 'info' | 'warning' | 'dang
   }
 }
 
+function ticketPaletteKey(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, '_');
+}
+
 function toYmd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -131,6 +136,18 @@ function parseDue(iso: string | null): Date | null {
   }
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Short date for ticket list (opened / closed). */
+function formatTicketListDate(iso: string | null | undefined): string {
+  if (!iso) {
+    return '—';
+  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return '—';
+  }
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function formatAssigneeLabels(t: TicketRecord, userLookup: Map<string, string>): string {
@@ -263,6 +280,7 @@ export function TicketManagementSection({
     nextStatus: TicketStatus;
     source: StatusChangeSource;
   } | null>(null);
+  const statusToastRef = useRef<Toast>(null);
 
   const [projectId, setProjectId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
@@ -541,6 +559,12 @@ export function TicketManagementSection({
     setStatusCommentSaving(true);
     try {
       await onPatchStatus(ticketId, nextStatus, statusCommentText);
+      statusToastRef.current?.show({
+        severity: 'success',
+        summary: 'Status updated',
+        detail: `Ticket is now ${humanize(nextStatus)}.`,
+        life: 4500,
+      });
       onRefresh();
       setStatusCommentOpen(false);
       setStatusCommentText('');
@@ -728,6 +752,7 @@ export function TicketManagementSection({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
     >
+      <Toast ref={statusToastRef} position="top-center" />
       <div className={`tickets-workspace ${panel === 'edit' ? 'tickets-workspace--focus' : ''} ${isListOnlyView ? 'tickets-workspace--list-only' : ''}`}>
         {isLeadCreateModule ? null : <div className="tickets-left-pane">
           <div className="tickets-left-head">
@@ -878,13 +903,43 @@ export function TicketManagementSection({
                 style={{ minWidth: '96px', width: '104px' }}
                 body={(row: TicketRecord) => (
                   <Tag
-                    className={`tickets-table-tag tickets-table-tag--priority tickets-priority-${row.priority}`}
+                    className={`tickets-table-tag tickets-table-tag--priority tickets-priority-${row.priority} ticket-palette-priority ticket-palette-priority--${ticketPaletteKey(row.priority)}`}
                     value={humanize(row.priority)}
                     severity={prioritySeverity(row.priority)}
                     rounded
                   />
                 )}
               />
+              {isLeadCreateModule ? null : (
+                <Column
+                  header="Opened"
+                  headerClassName="tickets-col-opened"
+                  bodyClassName="tickets-col-opened"
+                  sortable
+                  field="created_at"
+                  style={{ minWidth: '112px', width: '120px' }}
+                  body={(row: TicketRecord) => (
+                    <span className="tickets-date-cell" title={row.created_at ?? undefined}>
+                      {formatTicketListDate(row.created_at)}
+                    </span>
+                  )}
+                />
+              )}
+              {isLeadCreateModule ? null : (
+                <Column
+                  header="Closed"
+                  headerClassName="tickets-col-closed"
+                  bodyClassName="tickets-col-closed"
+                  sortable
+                  field="closed_at"
+                  style={{ minWidth: '112px', width: '120px' }}
+                  body={(row: TicketRecord) => (
+                    <span className="tickets-date-cell" title={row.closed_at ?? undefined}>
+                      {formatTicketListDate(row.closed_at)}
+                    </span>
+                  )}
+                />
+              )}
               <Column
                 header="Status"
                 headerClassName="tickets-col-status"
@@ -893,7 +948,7 @@ export function TicketManagementSection({
                 body={(row: TicketRecord) =>
                   (!canEditTickets || (ticketRole === 'member' && row.status === 'closed')) ? (
                     <Tag
-                      className={`tickets-table-tag tickets-table-tag--status tickets-status-${row.status}`}
+                      className={`tickets-table-tag tickets-table-tag--status tickets-status-${row.status} ticket-palette-status ticket-palette-status--${ticketPaletteKey(row.status)}`}
                       value={humanize(row.status)}
                       severity={statusSeverity(row.status)}
                       rounded
@@ -904,7 +959,8 @@ export function TicketManagementSection({
                       options={statusDropdownOptions}
                       onChange={(ev) => void handleInlineStatusChange(row, ev.value as TicketStatus)}
                       disabled={statusBusy === row.id}
-                      className="tickets-status-dropdown"
+                      className={`tickets-status-dropdown tickets-status-dropdown--${ticketPaletteKey(row.status)}`}
+                      panelClassName="tickets-status-dropdown-panel"
                       onClick={(e) => e.stopPropagation()}
                     />
                   )
@@ -1004,7 +1060,12 @@ export function TicketManagementSection({
                         >
                           <div className="kanban-card-top">
                             <strong className="tickets-ref-cell">{displayTicketRef(row)}</strong>
-                            <Tag value={humanize(row.priority)} severity={prioritySeverity(row.priority)} rounded />
+                            <Tag
+                              value={humanize(row.priority)}
+                              severity={prioritySeverity(row.priority)}
+                              rounded
+                              className={`ticket-palette-priority ticket-palette-priority--${ticketPaletteKey(row.priority)}`}
+                            />
                           </div>
                           <p>{row.title}</p>
                           <div className="kanban-meta">
@@ -1086,10 +1147,16 @@ export function TicketManagementSection({
                                   options={statusDropdownOptions}
                                   onChange={(ev) => void handleInlineStatusChange(editingTicket, ev.value as TicketStatus)}
                                   disabled={statusBusy === editingTicket.id}
-                                  className="full-width"
+                                  className={`full-width tickets-status-dropdown tickets-status-dropdown--${ticketPaletteKey(editingTicket.status)}`}
+                                  panelClassName="tickets-status-dropdown-panel"
                                 />
                               ) : (
-                                <Tag value={humanize(editingTicket.status)} severity={statusSeverity(editingTicket.status)} rounded />
+                                <Tag
+                                  value={humanize(editingTicket.status)}
+                                  severity={statusSeverity(editingTicket.status)}
+                                  rounded
+                                  className={`ticket-palette-status ticket-palette-status--${ticketPaletteKey(editingTicket.status)}`}
+                                />
                               )}
                               <p className="ticket-form-hint">Workflow moves one step at a time. Only leads can close.</p>
                             </div>
@@ -1137,7 +1204,11 @@ export function TicketManagementSection({
                                     className="full-width"
                                   />
                                 ) : (
-                                  <div className="ticket-locked-field">{humanize(ticketType)}</div>
+                                  <div className="ticket-locked-field">
+                                    <span className={`ticket-palette-type ticket-palette-type--${ticketPaletteKey(ticketType)}`}>
+                                      {humanize(ticketType)}
+                                    </span>
+                                  </div>
                                 )}
                               </div>
                               <div className="ticket-form-field">
@@ -1150,7 +1221,14 @@ export function TicketManagementSection({
                                     className="full-width"
                                   />
                                 ) : (
-                                  <div className="ticket-locked-field">{humanize(priority)}</div>
+                                  <div className="ticket-locked-field">
+                                    <Tag
+                                      value={humanize(priority)}
+                                      severity={prioritySeverity(priority)}
+                                      rounded
+                                      className={`ticket-palette-priority ticket-palette-priority--${ticketPaletteKey(priority)}`}
+                                    />
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -1254,14 +1332,20 @@ export function TicketManagementSection({
                             <dt>Status</dt>
                             <dd>
                               {!canEditTickets || editingTicket.status === 'closed' ? (
-                                <Tag value={humanize(editingTicket.status)} severity={statusSeverity(editingTicket.status)} rounded />
+                                <Tag
+                                  value={humanize(editingTicket.status)}
+                                  severity={statusSeverity(editingTicket.status)}
+                                  rounded
+                                  className={`ticket-palette-status ticket-palette-status--${ticketPaletteKey(editingTicket.status)}`}
+                                />
                               ) : (
                                 <Dropdown
                                   value={editingTicket.status}
                                   options={statusDropdownOptions}
                                   onChange={(ev) => void handleInlineStatusChange(editingTicket, ev.value as TicketStatus)}
                                   disabled={statusBusy === editingTicket.id}
-                                  className="full-width"
+                                  className={`full-width tickets-status-dropdown tickets-status-dropdown--${ticketPaletteKey(editingTicket.status)}`}
+                                  panelClassName="tickets-status-dropdown-panel"
                                 />
                               )}
                             </dd>
@@ -1270,9 +1354,20 @@ export function TicketManagementSection({
                             <dt>Project</dt>
                             <dd>{projectLookup.get(editingTicket.project_id) ?? '—'}</dd>
                             <dt>Type</dt>
-                            <dd>{humanize(editingTicket.type)}</dd>
+                            <dd>
+                              <span className={`ticket-palette-type ticket-palette-type--${ticketPaletteKey(editingTicket.type)}`}>
+                                {humanize(editingTicket.type)}
+                              </span>
+                            </dd>
                             <dt>Priority</dt>
-                            <dd>{humanize(editingTicket.priority)}</dd>
+                            <dd>
+                              <Tag
+                                value={humanize(editingTicket.priority)}
+                                severity={prioritySeverity(editingTicket.priority)}
+                                rounded
+                                className={`ticket-palette-priority ticket-palette-priority--${ticketPaletteKey(editingTicket.priority)}`}
+                              />
+                            </dd>
                             <dt>Due</dt>
                             <dd>{editingTicket.due_date ?? '—'}</dd>
                           </dl>

@@ -1,14 +1,20 @@
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app.constants.enums import UserRole
+from app.core.config import settings
 from app.core.database import get_db
-from app.dependencies.auth import get_current_admin, get_current_lead, get_current_member
-from app.models import Event, EventMilestone, Project, Task
+from app.dependencies.auth import get_current_lead, get_current_member
+from app.models import Event, EventAttachment, EventMilestone, Project, Task, User
 from app.schemas.events_tasks import (
+    EventAttachmentResponse,
     EventCreate,
     EventResponse,
     EventUpdate,
@@ -18,11 +24,41 @@ from app.schemas.events_tasks import (
     TaskCreate,
     TaskResponse,
 )
+from app.utils.access import accessible_project_ids
 
 router = APIRouter(prefix="/work", tags=["events-tasks"])
 
 
-def _event_to_response(event: Event) -> EventResponse:
+def _user_name(db: Session, user_id: UUID) -> str:
+    u = db.get(User, user_id)
+    return u.name if u else "Unknown"
+
+
+def _ensure_event_access(db: Session, user: User, event: Event) -> None:
+    if user.role == UserRole.ADMIN:
+        return
+    if event.project_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this event")
+    allowed = accessible_project_ids(db, user)
+    if event.project_id not in allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this event")
+
+
+def _attachment_to_response(db: Session, row: EventAttachment) -> EventAttachmentResponse:
+    return EventAttachmentResponse(
+        id=row.id,
+        event_id=row.event_id,
+        filename=row.filename,
+        file_size_bytes=row.file_size_bytes,
+        mime_type=row.mime_type,
+        uploaded_by=row.uploaded_by,
+        uploader_name=_user_name(db, row.uploaded_by),
+        created_at=row.created_at,
+    )
+
+
+def _event_to_response(db: Session, event: Event) -> EventResponse:
+    atts = sorted(event.attachments or [], key=lambda a: a.created_at, reverse=True)
     return EventResponse(
         id=event.id,
         project_id=event.project_id,
@@ -41,6 +77,7 @@ def _event_to_response(event: Event) -> EventResponse:
             MilestoneResponse.model_validate(m)
             for m in sorted(event.milestones, key=lambda x: (x.sort_order, x.created_at))
         ],
+        attachments=[_attachment_to_response(db, a) for a in atts],
     )
 
 
@@ -65,7 +102,11 @@ def list_events(
     to: datetime | None = Query(None, description="ISO range end; events overlapping range are returned"),
 ):
     """List events, optionally filtered to those overlapping [from, to]."""
-    stmt = select(Event).options(joinedload(Event.project), selectinload(Event.milestones)).order_by(Event.start_at.asc())
+    stmt = (
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .order_by(Event.start_at.asc())
+    )
     if from_ is not None and to is not None:
         if from_ > to:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="from must be <= to")
@@ -76,11 +117,11 @@ def list_events(
             )
         )
     rows = db.execute(stmt).unique().scalars().all()
-    return [_event_to_response(e) for e in rows]
+    return [_event_to_response(db, e) for e in rows]
 
 
 @router.post("/events", response_model=EventResponse, status_code=status.HTTP_201_CREATED)
-def create_event(payload: EventCreate, db: Session = Depends(get_db), user=Depends(get_current_admin)):
+def create_event(payload: EventCreate, db: Session = Depends(get_db), user=Depends(get_current_lead)):
     project = db.get(Project, payload.project_id)
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
@@ -100,9 +141,11 @@ def create_event(payload: EventCreate, db: Session = Depends(get_db), user=Depen
     db.add(event)
     db.commit()
     row = db.execute(
-        select(Event).options(joinedload(Event.project), selectinload(Event.milestones)).where(Event.id == event.id)
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .where(Event.id == event.id)
     ).unique().scalar_one()
-    return _event_to_response(row)
+    return _event_to_response(db, row)
 
 
 @router.put("/events/{event_id}", response_model=EventResponse)
@@ -110,10 +153,12 @@ def update_event(
     event_id: UUID,
     payload: EventUpdate,
     db: Session = Depends(get_db),
-    _=Depends(get_current_admin),
+    _=Depends(get_current_lead),
 ):
     event = db.execute(
-        select(Event).options(joinedload(Event.project), selectinload(Event.milestones)).where(Event.id == event_id)
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .where(Event.id == event_id)
     ).unique().scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -146,13 +191,15 @@ def update_event(
 
     db.commit()
     row = db.execute(
-        select(Event).options(joinedload(Event.project), selectinload(Event.milestones)).where(Event.id == event_id)
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .where(Event.id == event_id)
     ).unique().scalar_one()
-    return _event_to_response(row)
+    return _event_to_response(db, row)
 
 
 @router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_event(event_id: UUID, db: Session = Depends(get_db), _=Depends(get_current_admin)):
+def delete_event(event_id: UUID, db: Session = Depends(get_db), _=Depends(get_current_lead)):
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -167,10 +214,12 @@ def patch_milestone(
     milestone_id: UUID,
     payload: MilestonePatch,
     db: Session = Depends(get_db),
-    _=Depends(get_current_admin),
+    _=Depends(get_current_lead),
 ):
     event = db.execute(
-        select(Event).options(joinedload(Event.project), selectinload(Event.milestones)).where(Event.id == event_id)
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .where(Event.id == event_id)
     ).unique().scalar_one_or_none()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
@@ -183,9 +232,119 @@ def patch_milestone(
         ms.completed_at = None
     db.commit()
     row = db.execute(
-        select(Event).options(joinedload(Event.project), selectinload(Event.milestones)).where(Event.id == event_id)
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .where(Event.id == event_id)
     ).unique().scalar_one()
-    return _event_to_response(row)
+    return _event_to_response(db, row)
+
+
+@router.post("/events/{event_id}/attachments", response_model=EventResponse)
+async def upload_event_attachment(
+    event_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_lead),
+    file: UploadFile = File(...),
+):
+    event = db.execute(
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .where(Event.id == event_id)
+    ).unique().scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    _ensure_event_access(db, user, event)
+
+    if not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing filename")
+    orig = Path(file.filename).name
+    suffix = Path(orig).suffix[:20]
+    safe = f"{uuid.uuid4().hex}{suffix}"
+    rel = f"{event_id}/{safe}"
+    root = Path(settings.event_upload_dir)
+    dest_dir = root / str(event_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / safe
+    content = await file.read()
+    if len(content) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File too large (max 15MB)")
+    dest_path.write_bytes(content)
+    row = EventAttachment(
+        event_id=event.id,
+        uploaded_by=user.id,
+        filename=orig[:300],
+        file_path=rel,
+        file_size_bytes=len(content),
+        mime_type=(file.content_type or "application/octet-stream")[:100],
+    )
+    db.add(row)
+    db.commit()
+    refreshed = db.execute(
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .where(Event.id == event_id)
+    ).unique().scalar_one()
+    return _event_to_response(db, refreshed)
+
+
+@router.delete("/events/{event_id}/attachments/{attachment_id}", response_model=EventResponse)
+def delete_event_attachment(
+    event_id: UUID,
+    attachment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_lead),
+):
+    event = db.execute(
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .where(Event.id == event_id)
+    ).unique().scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    _ensure_event_access(db, user, event)
+
+    att = db.get(EventAttachment, attachment_id)
+    if not att or att.event_id != event.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+
+    base = Path(settings.event_upload_dir).resolve()
+    full = (base / att.file_path).resolve()
+    if str(full).startswith(str(base)) and full.is_file():
+        full.unlink()
+
+    db.delete(att)
+    db.commit()
+    refreshed = db.execute(
+        select(Event)
+        .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
+        .where(Event.id == event_id)
+    ).unique().scalar_one()
+    return _event_to_response(db, refreshed)
+
+
+@router.get("/events/{event_id}/attachments/{attachment_id}/file")
+def download_event_attachment(
+    event_id: UUID,
+    attachment_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_member),
+):
+    event = db.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    _ensure_event_access(db, user, event)
+
+    att = db.get(EventAttachment, attachment_id)
+    if not att or att.event_id != event.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+
+    base = Path(settings.event_upload_dir).resolve()
+    full = (base / att.file_path).resolve()
+    if not str(full).startswith(str(base)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid path")
+    if not full.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File missing on disk")
+    return FileResponse(path=str(full), filename=att.filename, media_type=att.mime_type)
 
 
 @router.post("/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)

@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     log_level: str = "INFO"
     ticket_upload_dir: str = "uploads/tickets"
+    event_upload_dir: str = "uploads/events"
+    project_docs_upload_dir: str = "uploads/project_documents"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
 

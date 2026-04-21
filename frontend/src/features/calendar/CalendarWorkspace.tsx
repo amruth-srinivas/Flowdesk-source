@@ -11,7 +11,8 @@ type CalendarWorkspaceProps = {
   viewKey: string;
   events: CalendarEventRecord[];
   isLoading: boolean;
-  isAdmin: boolean;
+  /** Admins and team leads can add/edit activities and toggle milestones. */
+  canManageEvents: boolean;
   projects: ProjectRecord[];
   onToggleMilestone: (eventId: string, milestoneId: string, completed: boolean) => Promise<void>;
   onMonthRangeChange: (fromIso: string, toIso: string) => void;
@@ -22,7 +23,7 @@ export function CalendarWorkspace({
   viewKey,
   events,
   isLoading,
-  isAdmin,
+  canManageEvents,
   projects,
   onToggleMilestone,
   onMonthRangeChange,
@@ -33,6 +34,17 @@ export function CalendarWorkspace({
   const [focusedEventId, setFocusedEventId] = useState<string | null>(null);
   const [milestoneBusy, setMilestoneBusy] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [addFormInitialStart, setAddFormInitialStart] = useState<Date | null>(null);
+
+  function openAddDialog(presetDay?: Date | null) {
+    setAddFormInitialStart(presetDay ?? null);
+    setAddOpen(true);
+  }
+
+  function closeAddDialog() {
+    setAddOpen(false);
+    setAddFormInitialStart(null);
+  }
 
   function handleSelectDay(date: Date, evs: CalendarEventRecord[], focusEventId?: string) {
     setSelectedDate(date);
@@ -66,19 +78,14 @@ export function CalendarWorkspace({
       <div className="calendar-workspace-top">
         <div>
           <h3 className="calendar-kicker">Calendar</h3>
-          <h1 className="calendar-title">Schedule</h1>
-          <p className="calendar-sub">
-            View activities on the calendar. Select a day to see details here — or click an activity chip to focus it.{' '}
-            {isAdmin ? 'Admins can add activities with the button on the right.' : ''}
-          </p>
         </div>
-        {isAdmin ? (
+        {canManageEvents ? (
           <Button
             type="button"
             label="Add activity"
             icon="pi pi-plus"
             className="calendar-add-activity-btn"
-            onClick={() => setAddOpen(true)}
+            onClick={() => openAddDialog()}
           />
         ) : null}
       </div>
@@ -100,20 +107,22 @@ export function CalendarWorkspace({
             selectedDate={selectedDate}
             dayEvents={dayEvents}
             isLoading={isLoading}
-            isAdmin={isAdmin}
+            canManageEvents={canManageEvents}
             focusedEventId={focusedEventId}
             milestoneBusy={milestoneBusy}
             onClose={clearSelection}
             onToggleMilestone={handleMilestoneToggle}
+            onAddActivity={canManageEvents ? () => openAddDialog(selectedDate) : undefined}
+            onAttachmentsChanged={onCreated}
           />
         </aside>
       </div>
 
-      {isAdmin ? (
+      {canManageEvents ? (
         <Dialog
           header="Add activity"
           visible={addOpen}
-          onHide={() => setAddOpen(false)}
+          onHide={closeAddDialog}
           className="project-dialog calendar-add-dialog"
           style={{ width: 'min(94vw, 640px)' }}
           modal
@@ -121,12 +130,14 @@ export function CalendarWorkspace({
           draggable={false}
         >
           <CalendarEventForm
+            key={`${viewKey}-add-${addFormInitialStart?.getTime() ?? 'default'}`}
             viewKey={`${viewKey}-add`}
             projects={projects}
             variant="dialog"
+            initialStartAt={addFormInitialStart ?? undefined}
             onCreated={() => {
               onCreated();
-              setAddOpen(false);
+              closeAddDialog();
             }}
           />
         </Dialog>

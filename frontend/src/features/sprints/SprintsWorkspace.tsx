@@ -7,6 +7,9 @@ import { Dropdown } from 'primereact/dropdown';
 import { InputNumber } from 'primereact/inputnumber';
 import { InputText } from 'primereact/inputtext';
 import { MultiSelect } from 'primereact/multiselect';
+import { Chart } from 'primereact/chart';
+import { Column } from 'primereact/column';
+import { DataTable } from 'primereact/datatable';
 import { ProgressBar } from 'primereact/progressbar';
 import { Tag } from 'primereact/tag';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
@@ -84,6 +87,103 @@ function formatSprintDay(ymd: string): string {
   if (Number.isNaN(d.getTime())) return ymd;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
+
+function formatSprintRange(start: string, end: string): string {
+  return `${formatSprintDay(start)} – ${formatSprintDay(end)}`;
+}
+
+function humanizeToken(s: string): string {
+  return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function sprintStatusTagSeverity(
+  status: string,
+): 'success' | 'info' | 'warning' | 'secondary' | 'danger' | undefined {
+  const x = status.toLowerCase().trim();
+  if (x === 'active') return 'success';
+  if (x === 'planning') return 'warning';
+  if (x === 'completed' || x === 'closed') return 'info';
+  return 'secondary';
+}
+
+function ticketPrioritySeverity(
+  p: string,
+): 'success' | 'info' | 'warning' | 'danger' | undefined {
+  const x = p.toLowerCase().replace(/\s+/g, '_');
+  if (x === 'critical') return 'danger';
+  if (x === 'high') return 'warning';
+  if (x === 'medium') return 'info';
+  if (x === 'low') return 'success';
+  return undefined;
+}
+
+function ticketPaletteKey(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, '_');
+}
+
+const SPRINT_CHART_PALETTE = [
+  '#7c9ee6',
+  '#9a8fe0',
+  '#f2b880',
+  '#7fc7b2',
+  '#96a3b8',
+  '#d39ac2',
+  '#88c4d8',
+  '#e59aa8',
+];
+
+const sprintDoughnutOptions = {
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      position: 'bottom' as const,
+      labels: {
+        font: { size: 11 },
+        padding: 10,
+        usePointStyle: true,
+        boxWidth: 9,
+        boxHeight: 9,
+        color: '#54627a',
+      },
+    },
+    tooltip: { displayColors: false },
+  },
+  cutout: '58%',
+};
+
+const sprintBarOptions = {
+  indexAxis: 'y' as const,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { display: false },
+    tooltip: { enabled: true, displayColors: false },
+  },
+  scales: {
+    x: {
+      beginAtZero: true,
+      ticks: { stepSize: 1, precision: 0 },
+      grid: { color: '#eef2f7' },
+      border: { display: false },
+    },
+    y: {
+      grid: { display: false },
+      border: { display: false },
+    },
+  },
+};
+
+const sprintModalStagger = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.06, delayChildren: 0.02 },
+  },
+};
+
+const sprintModalItem = {
+  hidden: { opacity: 0, y: 10 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.24 } },
+};
 
 function sprintTicketStatusSeverity(status: string): 'success' | 'info' | 'warning' | 'secondary' | undefined {
   const s = status.toLowerCase().replace(/\s+/g, '_');
@@ -212,6 +312,7 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
                 <Tag
                   value={t.status.replace(/_/g, ' ')}
                   severity={sprintTicketStatusSeverity(t.status)}
+                  className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(t.status)}`}
                 />
               </div>
             ))}
@@ -580,11 +681,6 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
       <header className="sprints-workspace-header">
         <div>
           <h3 className="calendar-kicker">Sprints</h3>
-          <h1 className="calendar-title">Configuration</h1>
-          <p className="calendar-sub sprints-workspace-sub">
-            Team leads run a short wizard: schedule and name the sprint, choose projects, assign tickets, then preview and
-            confirm. Everyone else follows the sprint and updates work from Tickets.
-          </p>
         </div>
       </header>
 
@@ -860,7 +956,11 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
                       >
                         <span className="sprints-ticket-ref">{t.public_reference ?? `#${t.ticket_number}`}</span>
                         <span className="sprints-ticket-title">{t.title}</span>
-                        <Tag value={t.status} severity="info" className="sprints-ticket-status" />
+                        <Tag
+                          value={t.status}
+                          severity="info"
+                          className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(t.status)}`}
+                        />
                       </div>
                     ))}
                     {!ticketsAvailable.length ? <p className="sprints-muted">No unassigned tickets in these projects.</p> : null}
@@ -877,7 +977,11 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
                       <div key={t.id} className="sprints-ticket-chip sprints-ticket-chip--in">
                         <span className="sprints-ticket-ref">{t.public_reference ?? `#${t.ticket_number}`}</span>
                         <span className="sprints-ticket-title">{t.title}</span>
-                        <Tag value={t.status} severity="success" className="sprints-ticket-status" />
+                        <Tag
+                          value={t.status}
+                          severity="success"
+                          className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(t.status)}`}
+                        />
                         {isLead ? (
                           <Button
                             type="button"
@@ -960,7 +1064,11 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
                       <li key={t.id}>
                         <span className="sprints-ticket-ref">{t.public_reference ?? `#${t.ticket_number}`}</span>
                         <span className="sprints-ticket-title">{t.title}</span>
-                        <Tag value={t.status} severity="info" className="sprints-ticket-status" />
+                        <Tag
+                          value={t.status}
+                          severity="info"
+                          className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(t.status)}`}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -1075,7 +1183,11 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
                     >
                       <span className="sprints-ticket-ref">{t.public_reference ?? `#${t.ticket_number}`}</span>
                       <span className="sprints-ticket-title">{t.title}</span>
-                      <Tag value={t.status} severity="info" className="sprints-ticket-status" />
+                      <Tag
+                        value={t.status}
+                        severity="info"
+                        className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(t.status)}`}
+                      />
                     </div>
                   ))}
                   {!ticketsAvailable.length ? <p className="sprints-muted">No unassigned tickets in these projects.</p> : null}
@@ -1092,7 +1204,11 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
                     <div key={t.id} className="sprints-ticket-chip sprints-ticket-chip--in">
                       <span className="sprints-ticket-ref">{t.public_reference ?? `#${t.ticket_number}`}</span>
                       <span className="sprints-ticket-title">{t.title}</span>
-                      <Tag value={t.status} severity="success" className="sprints-ticket-status" />
+                      <Tag
+                        value={t.status}
+                        severity="success"
+                        className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(t.status)}`}
+                      />
                       {isLead ? (
                         <Button
                           type="button"
@@ -1155,13 +1271,20 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
 function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boolean }) {
   const [sprints, setSprints] = useState<SprintRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [dashboardOpen, setDashboardOpen] = useState(false);
   const [analytics, setAnalytics] = useState<SprintAnalyticsRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const displaySprints = useMemo(
-    () => (isLead ? sprints : sprints.filter(isSprintActive)),
+    () => (isLead ? sprints : sprints.filter(isMemberVisibleSprint)),
     [sprints, isLead],
+  );
+
+  const selectedSprint = useMemo(
+    () => displaySprints.find((s) => s.id === selectedId) ?? null,
+    [displaySprints, selectedId],
   );
 
   useEffect(() => {
@@ -1172,8 +1295,8 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
         const list = await getSprintsRequest();
         if (cancelled) return;
         setSprints(list);
-        const visible = isLead ? list : list.filter(isSprintActive);
-        setSelectedId((cur) => (cur && visible.some((s) => s.id === cur) ? cur : visible[0]?.id ?? null));
+        const visible = isLead ? list : list.filter(isMemberVisibleSprint);
+        setSelectedId((cur) => (cur && visible.some((s) => s.id === cur) ? cur : null));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load');
       } finally {
@@ -1192,11 +1315,14 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
     }
     let cancelled = false;
     (async () => {
+      setAnalyticsLoading(true);
       try {
         const a = await getSprintAnalyticsRequest(selectedId);
         if (!cancelled) setAnalytics(a);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Analytics failed');
+      } finally {
+        if (!cancelled) setAnalyticsLoading(false);
       }
     })();
     return () => {
@@ -1206,10 +1332,78 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
 
   const statusEntries = analytics ? Object.entries(analytics.by_status).sort(([a], [b]) => a.localeCompare(b)) : [];
 
+  const statusChartData = useMemo(() => {
+    if (!analytics) return null;
+    const entries = Object.entries(analytics.by_status).sort(([a], [b]) => a.localeCompare(b));
+    if (!entries.length) return null;
+    return {
+      labels: entries.map(([k]) => humanizeToken(k)),
+      datasets: [
+        {
+          data: entries.map(([, v]) => v),
+          backgroundColor: entries.map((_, i) => SPRINT_CHART_PALETTE[i % SPRINT_CHART_PALETTE.length]),
+          borderWidth: 0,
+        },
+      ],
+    };
+  }, [analytics]);
+
+  const completionChartData = useMemo(() => {
+    if (!analytics) return null;
+    const done = analytics.tickets_done;
+    const rem = analytics.tickets_remaining;
+    if (done === 0 && rem === 0) {
+      return {
+        labels: ['No tickets in sprint'],
+        datasets: [{ data: [1], backgroundColor: ['#e2e8f0'], borderWidth: 0 }],
+      };
+    }
+    return {
+      labels: ['Done / resolved', 'Remaining'],
+      datasets: [
+        {
+          data: [done, rem],
+          backgroundColor: ['#22c55e', '#cbd5e1'],
+          borderWidth: 0,
+        },
+      ],
+    };
+  }, [analytics]);
+
+  const priorityChartData = useMemo(() => {
+    if (!analytics?.tickets?.length) return null;
+    const m: Record<string, number> = {};
+    for (const t of analytics.tickets) {
+      const p = (t.priority || 'unknown').toLowerCase();
+      m[p] = (m[p] ?? 0) + 1;
+    }
+    const entries = Object.entries(m).sort(([a], [b]) => a.localeCompare(b));
+    const tone = (k: string): string => {
+      if (k === 'critical') return '#e9a0a7';
+      if (k === 'high') return '#f2c28c';
+      if (k === 'medium') return '#8fb0ea';
+      if (k === 'low') return '#8fcab3';
+      return '#a7b2c6';
+    };
+    return {
+      labels: entries.map(([k]) => humanizeToken(k)),
+      datasets: [
+        {
+          label: '',
+          data: entries.map(([, v]) => v),
+          backgroundColor: entries.map(([k]) => tone(k)),
+          borderRadius: 6,
+          borderSkipped: false,
+          barThickness: 22,
+        },
+      ],
+    };
+  }, [analytics]);
+
   return (
     <motion.article
       key={viewKey}
-      className="page-card sprints-workspace-card"
+      className="page-card sprints-workspace-card sprints-monitoring-page"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
@@ -1217,12 +1411,6 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
       <header className="sprints-workspace-header">
         <div>
           <h3 className="calendar-kicker">Sprints</h3>
-          <h1 className="calendar-title">Monitoring</h1>
-          <p className="calendar-sub sprints-workspace-sub">
-            {isLead
-              ? 'Track sprint progress: completion rate and ticket distribution by status. Updates come from ticket workflow across the team.'
-              : 'Track the active sprint only: completion rate and ticket distribution by status. Planning sprints are visible to team leads.'}
-          </p>
         </div>
       </header>
 
@@ -1231,60 +1419,335 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
           {error}
         </p>
       ) : null}
-      {loading ? <p className="sprints-muted">Loading…</p> : null}
-
-      <div className="sprints-picker-row">
-        <label htmlFor="mon-sprint">Sprint</label>
-        <Dropdown
-          inputId="mon-sprint"
-          value={selectedId}
-          options={displaySprints.map((s) => ({ label: s.title, value: s.id }))}
-          onChange={(e) => setSelectedId(e.value as string)}
-          placeholder="Select sprint"
-          className="sprints-input sprints-dropdown-wide"
-        />
-      </div>
+      {loading ? <p className="sprints-muted">Loading sprints…</p> : null}
 
       {!isLead && !loading && displaySprints.length === 0 ? (
-        <p className="sprints-muted">No active sprint yet. Your team lead will activate a sprint when it is ready.</p>
+        <p className="sprints-muted">No active or planning sprint yet. Your team lead will create one when it is ready.</p>
       ) : null}
 
-      {analytics && selectedId ? (
-        <div className="sprints-analytics">
-          <div className="sprints-analytics-kpis">
-            <div className="sprints-kpi">
-              <span className="sprints-kpi-label">Tickets</span>
-              <span className="sprints-kpi-value">{analytics.total_tickets}</span>
+      {!loading && displaySprints.length > 0 ? (
+        <>
+          <section className="sprints-monitoring-sprints-table-section" aria-label="All sprints">
+            <div className="sprints-monitoring-table-section-head">
+              <h2 className="sprints-monitoring-section-title">All sprints</h2>
+              <p className="sprints-monitoring-section-sub sprints-monitoring-section-sub--tight">
+                Click a row to load the overview dashboard, charts, and ticket list for that sprint.
+              </p>
             </div>
-            <div className="sprints-kpi">
-              <span className="sprints-kpi-label">Done / resolved</span>
-              <span className="sprints-kpi-value">
-                {analytics.tickets_done} / {analytics.total_tickets}
-              </span>
+            <div className="sprints-monitoring-sprints-table-shell">
+              <DataTable
+                value={displaySprints}
+                dataKey="id"
+                selectionMode="single"
+                selection={selectedSprint}
+                onSelectionChange={(e) => {
+                  const v = e.value as SprintRecord | null;
+                  setSelectedId(v?.id ?? null);
+                  setDashboardOpen(Boolean(v?.id));
+                }}
+                metaKeySelection={false}
+                className="user-table sprints-monitoring-sprints-table"
+                stripedRows
+                rowHover
+                emptyMessage="No sprints to display."
+              >
+                <Column
+                  header="Sprint"
+                  style={{ minWidth: '200px' }}
+                  body={(row: SprintRecord) => (
+                    <div className="sprints-sprint-table-name">
+                      <span className="sprints-sprint-table-title">{row.title}</span>
+                      {isSprintActive(row) ? (
+                        <Tag value="Active" severity="success" rounded className="sprints-sprint-table-active" />
+                      ) : null}
+                    </div>
+                  )}
+                />
+                <Column
+                  header="Period"
+                  style={{ width: '220px' }}
+                  body={(row: SprintRecord) => (
+                    <span className="sprints-sprint-table-dates">{formatSprintRange(row.start_date, row.end_date)}</span>
+                  )}
+                />
+                <Column
+                  header="Days"
+                  style={{ width: '90px' }}
+                  body={(row: SprintRecord) => <span>{row.duration_days}</span>}
+                />
+                <Column
+                  header="Type"
+                  style={{ width: '120px' }}
+                  body={(row: SprintRecord) => (
+                    <span className="sprints-sprint-table-muted">{humanizeToken(row.sprint_type)}</span>
+                  )}
+                />
+                <Column
+                  header="Status"
+                  style={{ width: '130px' }}
+                  body={(row: SprintRecord) => (
+                    <Tag value={humanizeToken(row.status)} severity={sprintStatusTagSeverity(row.status)} rounded />
+                  )}
+                />
+              </DataTable>
             </div>
-            <div className="sprints-kpi">
-              <span className="sprints-kpi-label">Remaining</span>
-              <span className="sprints-kpi-value">{analytics.tickets_remaining}</span>
-            </div>
-          </div>
-          <div className="sprints-progress-wrap">
-            <span className="sprints-progress-label">Progress toward closed/resolved</span>
-            <ProgressBar value={analytics.progress_percent} className="sprints-progress-bar" />
-            <span className="sprints-progress-pct">{analytics.progress_percent}%</span>
-          </div>
-          <h3 className="sprints-subheading">By status</h3>
-          <div className="sprints-status-grid">
-            {statusEntries.map(([status, count]) => (
-              <div key={status} className="sprints-status-cell">
-                <span className="sprints-status-name">{status.replace(/_/g, ' ')}</span>
-                <span className="sprints-status-count">{count}</span>
+          </section>
+
+          <Dialog
+            header={selectedSprint ? `${selectedSprint.title} · Sprint overview` : 'Sprint overview'}
+            visible={dashboardOpen && Boolean(selectedId)}
+            className="sprints-monitoring-dashboard-dialog"
+            style={{ width: 'min(1300px, 98vw)' }}
+            contentStyle={{ paddingTop: 8 }}
+            modal
+            dismissableMask
+            draggable={false}
+            onHide={() => setDashboardOpen(false)}
+          >
+            {selectedId && selectedSprint ? (
+              <motion.section
+                className="sprints-monitoring-dashboard"
+                aria-label="Sprint overview"
+                variants={sprintModalStagger}
+                initial="hidden"
+                animate="show"
+              >
+              <div className="sprints-monitoring-dashboard-head">
+                <div>
+                  <h2 className="sprints-monitoring-dashboard-title">Sprint overview</h2>
+                  <p className="sprints-monitoring-hero-meta">
+                    <strong>{selectedSprint.title}</strong>
+                    <span className="sprints-monitoring-hero-dot" aria-hidden>
+                      ·
+                    </span>
+                    {formatSprintRange(selectedSprint.start_date, selectedSprint.end_date)}
+                    <span className="sprints-monitoring-hero-dot" aria-hidden>
+                      ·
+                    </span>
+                    {selectedSprint.duration_days} days
+                    {isSprintActive(selectedSprint) ? (
+                      <>
+                        <span className="sprints-monitoring-hero-dot" aria-hidden>
+                          ·
+                        </span>
+                        <Tag value="Active sprint" severity="success" rounded />
+                      </>
+                    ) : null}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  label="Clear selection"
+                  text
+                  className="sprints-monitoring-clear"
+                  onClick={() => {
+                    setDashboardOpen(false);
+                    setSelectedId(null);
+                  }}
+                />
               </div>
-            ))}
-            {!statusEntries.length ? <p className="sprints-muted">No tickets linked to this sprint yet.</p> : null}
-          </div>
-        </div>
-      ) : !loading ? (
-        <p className="sprints-muted">Select a sprint with linked tickets to see analytics.</p>
+
+              {analyticsLoading ? (
+                <p className="sprints-muted sprints-monitoring-loading-inline">Loading dashboard data…</p>
+              ) : null}
+
+              {analytics && selectedSprint ? (
+                <>
+                  <motion.div className="sprints-charts-grid" variants={sprintModalItem}>
+                    <div className="sprints-chart-card sprints-chart-card--status">
+                      <h3 className="sprints-chart-card-title">Tickets by status</h3>
+                      <div className="sprints-chart-canvas">
+                        {statusChartData ? (
+                          <Chart
+                            key={`${selectedId}-st`}
+                            type="doughnut"
+                            data={statusChartData}
+                            options={sprintDoughnutOptions}
+                            className="sprints-chart"
+                          />
+                        ) : (
+                          <p className="sprints-muted sprints-chart-empty">No status data yet.</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="sprints-chart-card sprints-chart-card--completion">
+                      <h3 className="sprints-chart-card-title">Completion mix</h3>
+                      <p className="sprints-chart-card-hint">Closed + resolved vs everything else</p>
+                      <div className="sprints-chart-canvas">
+                        {completionChartData ? (
+                          <Chart
+                            key={`${selectedId}-co`}
+                            type="doughnut"
+                            data={completionChartData}
+                            options={sprintDoughnutOptions}
+                            className="sprints-chart"
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  <motion.div className="sprints-monitoring-focus-row" variants={sprintModalItem}>
+                    <div className="sprints-chart-card sprints-chart-card--priority">
+                      <h3 className="sprints-chart-card-title">Tickets by priority</h3>
+                      <div className="sprints-chart-canvas sprints-chart-canvas--bar">
+                        {priorityChartData ? (
+                          <Chart
+                            key={`${selectedId}-pr`}
+                            type="bar"
+                            data={priorityChartData}
+                            options={sprintBarOptions}
+                            className="sprints-chart"
+                          />
+                        ) : (
+                          <p className="sprints-muted sprints-chart-empty">No tickets to chart.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="sprints-analytics sprints-analytics--panel">
+                      <div className="sprints-analytics-kpis">
+                        <div className="sprints-kpi">
+                          <span className="sprints-kpi-label">Tickets</span>
+                          <span className="sprints-kpi-value">{analytics.total_tickets}</span>
+                        </div>
+                        <div className="sprints-kpi">
+                          <span className="sprints-kpi-label">Done / resolved</span>
+                          <span className="sprints-kpi-value">
+                            {analytics.tickets_done} / {analytics.total_tickets}
+                          </span>
+                        </div>
+                        <div className="sprints-kpi">
+                          <span className="sprints-kpi-label">Remaining</span>
+                          <span className="sprints-kpi-value">{analytics.tickets_remaining}</span>
+                        </div>
+                      </div>
+                      <div className="sprints-progress-wrap">
+                        <span className="sprints-progress-label">Progress</span>
+                        <ProgressBar value={analytics.progress_percent} showValue={false} className="sprints-progress-bar" />
+                      </div>
+                      <h3 className="sprints-subheading">By status</h3>
+                      <div className="sprints-status-grid">
+                        {statusEntries.map(([st, count]) => (
+                          <div key={st} className="sprints-status-cell">
+                            <span className="sprints-status-name">{humanizeToken(st)}</span>
+                            <span className="sprints-status-count">{count}</span>
+                          </div>
+                        ))}
+                        {!statusEntries.length ? (
+                          <p className="sprints-muted">No tickets linked to this sprint yet.</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  <motion.section className="sprints-monitoring-members" aria-label="Active members" variants={sprintModalItem}>
+                    <h3 className="sprints-monitoring-section-title">People on this sprint</h3>
+                    <p className="sprints-monitoring-section-sub">
+                      Everyone assigned to at least one ticket in this sprint.
+                    </p>
+                    {(analytics.active_members ?? []).length ? (
+                      <ul className="sprints-monitoring-member-chips">
+                        {(analytics.active_members ?? []).map((m) => (
+                          <li key={m.id}>
+                            <span className="sprints-monitoring-member-chip" title={m.name}>
+                              <span className="sprints-monitoring-member-initials" aria-hidden>
+                                {m.name
+                                  .split(/\s+/)
+                                  .filter(Boolean)
+                                  .slice(0, 2)
+                                  .map((p) => p[0])
+                                  .join('')
+                                  .toUpperCase()
+                                  .slice(0, 2) || '?'}
+                              </span>
+                              <span className="sprints-monitoring-member-name">{m.name}</span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="sprints-muted">No assignees on sprint tickets yet.</p>
+                    )}
+                  </motion.section>
+
+                  <motion.section className="sprints-monitoring-tickets" aria-label="Sprint tickets" variants={sprintModalItem}>
+                    <h3 className="sprints-monitoring-section-title">Tickets in this sprint</h3>
+                    <div className="sprints-monitoring-table-shell">
+                      <DataTable
+                        value={analytics.tickets ?? []}
+                        dataKey="id"
+                        className="user-table sprints-monitoring-table"
+                        stripedRows
+                        rowClassName={(row) => {
+                          const s = String(row.status ?? '').toLowerCase().replace(/\s+/g, '_');
+                          return s === 'closed' || s === 'resolved' ? 'sprints-ticket-row--closed' : '';
+                        }}
+                        emptyMessage="No tickets linked to this sprint."
+                      >
+                        <Column
+                          header="Reference"
+                          style={{ width: '120px' }}
+                          body={(row) => (
+                            <span className="sprints-mon-ref">{row.public_reference ?? '—'}</span>
+                          )}
+                        />
+                        <Column
+                          header="Title"
+                          body={(row) => <span className="sprints-mon-title">{row.title}</span>}
+                        />
+                        <Column
+                          header="Status"
+                          style={{ width: '140px' }}
+                          body={(row) => {
+                            const statusKey = ticketPaletteKey(String(row.status ?? ''));
+                            return (
+                              <Tag
+                                value={humanizeToken(row.status)}
+                                severity={sprintTicketStatusSeverity(row.status)}
+                                rounded
+                                className={`sprints-ticket-status sprints-ticket-status--${statusKey}`}
+                              />
+                            );
+                          }}
+                        />
+                        <Column
+                          header="Priority"
+                          style={{ width: '110px' }}
+                          body={(row) => {
+                            const priorityKey = ticketPaletteKey(String(row.priority ?? ''));
+                            return (
+                              <Tag
+                                value={humanizeToken(row.priority)}
+                                severity={ticketPrioritySeverity(row.priority)}
+                                rounded
+                                className={`sprints-ticket-priority sprints-ticket-priority--${priorityKey}`}
+                              />
+                            );
+                          }}
+                        />
+                        <Column
+                          header="Assignees"
+                          style={{ minWidth: '160px' }}
+                          body={(row) =>
+                            row.assignee_names.length ? (
+                              <span className="sprints-mon-assignees">{row.assignee_names.join(', ')}</span>
+                            ) : (
+                              <span className="sprints-muted">—</span>
+                            )
+                          }
+                        />
+                      </DataTable>
+                    </div>
+                  </motion.section>
+                </>
+              ) : !analyticsLoading ? (
+                <p className="sprints-muted">Could not load analytics for this sprint.</p>
+              ) : null}
+              </motion.section>
+            ) : null}
+          </Dialog>
+        </>
       ) : null}
     </motion.article>
   );

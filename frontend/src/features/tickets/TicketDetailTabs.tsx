@@ -144,6 +144,8 @@ type TicketDetailTabsProps = {
 };
 
 export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostInternalNotes, onThreadChanged }: TicketDetailTabsProps) {
+  const ticketClosed = ticket.status === 'closed';
+
   const [tabIndex, setTabIndex] = useState(0);
   const [comments, setComments] = useState<TicketCommentRecord[]>([]);
   const [history, setHistory] = useState<TicketHistoryRecord[]>([]);
@@ -251,6 +253,9 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
   }, [attachments, attachmentPreviewUrls, ticket.id]);
 
   async function handlePostComment() {
+    if (ticketClosed) {
+      return;
+    }
     const body = newComment;
     const plain = plainTextFromHtml(body);
     if (!plain && pendingFiles.length === 0) {
@@ -280,6 +285,9 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
   }
 
   async function handleSaveResolution() {
+    if (ticketClosed) {
+      return;
+    }
     if (!plainTextFromHtml(resolutionSummary).trim()) {
       setError('Resolution summary is required.');
       return;
@@ -304,7 +312,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
   }
 
   async function handleUploadFile(file: File | null) {
-    if (!file) {
+    if (!file || ticketClosed) {
       return;
     }
     setUploadBusy(true);
@@ -521,11 +529,16 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
             ) : null}
           </div>
           <motion.div
-            className="ticket-conv-reply ticket-conv-reply--chat"
+            className={`ticket-conv-reply ticket-conv-reply--chat${ticketClosed ? ' ticket-conv-reply--closed' : ''}`}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.2 }}
           >
+            {ticketClosed ? (
+              <p className="ticket-detail-muted ticket-closed-banner">
+                This ticket is closed. Reopen it from the sidebar to post replies or attach files.
+              </p>
+            ) : null}
             <div className="ticket-conv-controls">
               <input
                 type="file"
@@ -533,7 +546,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                 className="ticket-file-input"
                 accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
                 multiple
-                disabled={uploadBusy || posting}
+                disabled={uploadBusy || posting || ticketClosed}
                 onChange={(e) => {
                   const files = Array.from(e.target.files ?? []);
                   if (files.length) {
@@ -542,16 +555,21 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                   e.target.value = '';
                 }}
               />
-              <label htmlFor={`ticket-quick-upload-${viewKey}`} className="ticket-conv-attach-btn">
+              <label
+                htmlFor={`ticket-quick-upload-${viewKey}`}
+                className={`ticket-conv-attach-btn${ticketClosed ? ' ticket-conv-attach-btn--disabled' : ''}`}
+                aria-disabled={ticketClosed}
+              >
                 <i className="pi pi-paperclip" />
                 <span>{uploadBusy ? 'Uploading…' : 'Attach media/file'}</span>
               </label>
               {canPostInternalNotes ? (
-                <label className="ticket-conv-internal-check">
+                <label className={`ticket-conv-internal-check${ticketClosed ? ' ticket-conv-internal-check--disabled' : ''}`}>
                   <Checkbox
                     inputId={`ticket-internal-${viewKey}`}
                     checked={internalNote}
                     onChange={(e) => setInternalNote(Boolean(e.checked))}
+                    disabled={ticketClosed}
                   />
                   <span>Internal note</span>
                 </label>
@@ -566,6 +584,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                     <button
                       type="button"
                       className="ticket-conv-media-remove"
+                      disabled={ticketClosed}
                       onClick={() => setPendingFiles((current) => current.filter((_, i) => i !== idx))}
                       aria-label="Remove attachment"
                     >
@@ -581,13 +600,16 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
               onTextChange={(e) => setNewComment((e.htmlValue ?? '').slice(0, 12000))}
               className="ticket-conv-editor"
               headerTemplate={conversationEditorHeaderTemplate}
-              placeholder="Write a reply…"
+              placeholder={ticketClosed ? 'Conversation is read-only while the ticket is closed.' : 'Write a reply…'}
+              readOnly={ticketClosed}
             />
             <Button
               type="button"
               label={posting ? 'Sending…' : 'Post'}
               icon="pi pi-send"
-              disabled={posting || (!plainTextFromHtml(newComment) && pendingFiles.length === 0)}
+              disabled={
+                ticketClosed || posting || (!plainTextFromHtml(newComment) && pendingFiles.length === 0)
+              }
               onClick={() => void handlePostComment()}
             />
           </motion.div>
@@ -598,6 +620,11 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
             <p className="ticket-detail-muted">Loading…</p>
           ) : (
             <div className="ticket-resolution-form">
+              {ticketClosed ? (
+                <p className="ticket-detail-muted ticket-closed-banner">
+                  This ticket is closed. Resolution fields are read-only and cannot be saved.
+                </p>
+              ) : null}
               <label className="ticket-form-label" htmlFor={`res-sum-${viewKey}`}>
                 Summary
               </label>
@@ -607,6 +634,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                 onTextChange={(e) => setResolutionSummary(e.htmlValue ?? '')}
                 className="ticket-rich-editor"
                 headerTemplate={resolutionEditorHeaderTemplate}
+                readOnly={ticketClosed}
               />
               <label className="ticket-form-label" htmlFor={`res-root-${viewKey}`}>
                 Root cause
@@ -617,6 +645,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                 onTextChange={(e) => setResolutionRootCause(e.htmlValue ?? '')}
                 className="ticket-rich-editor"
                 headerTemplate={resolutionEditorHeaderTemplate}
+                readOnly={ticketClosed}
               />
               <label className="ticket-form-label" htmlFor={`res-steps-${viewKey}`}>
                 Steps taken
@@ -627,13 +656,14 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                 onTextChange={(e) => setResolutionSteps(e.htmlValue ?? '')}
                 className="ticket-rich-editor"
                 headerTemplate={resolutionEditorHeaderTemplate}
+                readOnly={ticketClosed}
               />
               <div className="ticket-detail-actions ticket-resolution-actions">
                 <Button
                   type="button"
                   label={resolutionSaving ? 'Saving…' : 'Save resolution'}
                   icon="pi pi-check"
-                  disabled={resolutionSaving}
+                  disabled={resolutionSaving || ticketClosed}
                   onClick={() => void handleSaveResolution()}
                 />
               </div>
@@ -646,20 +676,29 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
             <p className="ticket-detail-muted">Loading…</p>
           ) : (
             <div className="ticket-attachments">
+              {ticketClosed ? (
+                <p className="ticket-detail-muted ticket-closed-banner">
+                  Uploads are disabled while the ticket is closed. You can still download existing files below.
+                </p>
+              ) : null}
               <div className="ticket-attachments-upload">
                 <input
                   type="file"
                   id={`ticket-file-${viewKey}`}
                   className="ticket-file-input"
-                  disabled={uploadBusy}
+                  disabled={uploadBusy || ticketClosed}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     void handleUploadFile(f ?? null);
                     e.target.value = '';
                   }}
                 />
-                <label htmlFor={`ticket-file-${viewKey}`} className="ticket-file-label">
-                  {uploadBusy ? 'Uploading…' : 'Choose file (max 15MB)'}
+                <label
+                  htmlFor={`ticket-file-${viewKey}`}
+                  className={`ticket-file-label${ticketClosed ? ' ticket-file-label--disabled' : ''}`}
+                  aria-disabled={ticketClosed}
+                >
+                  {ticketClosed ? 'Uploads disabled (ticket closed)' : uploadBusy ? 'Uploading…' : 'Choose file (max 15MB)'}
                 </label>
               </div>
               <ul className="ticket-attachments-list">

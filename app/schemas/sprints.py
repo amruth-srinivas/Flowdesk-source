@@ -40,6 +40,20 @@ class SprintResponse(BaseModel):
     updated_at: datetime
 
 
+class SprintTicketBrief(BaseModel):
+    id: UUID
+    public_reference: str | None = None
+    title: str
+    status: str
+    priority: str
+    assignee_names: list[str] = Field(default_factory=list)
+
+
+class SprintActiveMember(BaseModel):
+    id: UUID
+    name: str
+
+
 class SprintAnalyticsResponse(BaseModel):
     sprint_id: UUID
     title: str
@@ -48,3 +62,5 @@ class SprintAnalyticsResponse(BaseModel):
     tickets_done: int
     tickets_remaining: int
     progress_percent: float
+    tickets: list[SprintTicketBrief] = Field(default_factory=list)
+    active_members: list[SprintActiveMember] = Field(default_factory=list)
