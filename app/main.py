@@ -5,6 +5,9 @@ from fastapi import FastAPI
 from app.core.config import settings
 from app.core.db_migrations import (
     apply_ticket_attachment_comment_migration,
+    apply_ticket_closed_by_migration,
+    apply_user_avatar_url_migration,
+    apply_user_theme_preference_migration,
     apply_customer_migrations,
     apply_event_migrations,
     apply_sprint_migrations,
@@ -52,6 +55,9 @@ def startup() -> None:
     apply_ticket_history_note_migration(engine)
     apply_ticket_attachment_comment_migration(engine)
     apply_sprint_migrations(engine)
+    apply_ticket_closed_by_migration(engine)
+    apply_user_avatar_url_migration(engine)
+    apply_user_theme_preference_migration(engine)
     with SessionLocal() as db:
         ensure_default_admin(db)
     logger.info("Startup checks complete")

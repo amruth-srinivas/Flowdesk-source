@@ -250,6 +250,105 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
     return tickets.filter((t) => t.sprint_id === shownSprint.id);
   }, [tickets, shownSprint]);
 
+  const [dashboardOpen, setDashboardOpen] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [analytics, setAnalytics] = useState<SprintAnalyticsRecord | null>(null);
+  const [selectedTicket, setSelectedTicket] = useState<TicketRecord | null>(null);
+
+  const formatDateTime = useCallback((value: string | null) => {
+    if (!value) return '—';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleString();
+  }, []);
+
+  const openMonitoringDashboard = useCallback(async () => {
+    if (!shownSprint) return;
+    setDashboardOpen(true);
+    setDashboardLoading(true);
+    setDashboardError(null);
+    try {
+      const data = await getSprintAnalyticsRequest(shownSprint.id);
+      setAnalytics(data);
+    } catch (e) {
+      setDashboardError(e instanceof Error ? e.message : 'Could not load monitoring dashboard');
+      setAnalytics(null);
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [shownSprint]);
+
+  const statusEntries = analytics ? Object.entries(analytics.by_status).sort(([a], [b]) => a.localeCompare(b)) : [];
+
+  const statusChartData = useMemo(() => {
+    if (!analytics) return null;
+    const entries = Object.entries(analytics.by_status).sort(([a], [b]) => a.localeCompare(b));
+    if (!entries.length) return null;
+    return {
+      labels: entries.map(([k]) => humanizeToken(k)),
+      datasets: [
+        {
+          data: entries.map(([, v]) => v),
+          backgroundColor: entries.map((_, i) => SPRINT_CHART_PALETTE[i % SPRINT_CHART_PALETTE.length]),
+          borderWidth: 0,
+        },
+      ],
+    };
+  }, [analytics]);
+
+  const completionChartData = useMemo(() => {
+    if (!analytics) return null;
+    const done = analytics.tickets_done;
+    const rem = analytics.tickets_remaining;
+    if (done === 0 && rem === 0) {
+      return {
+        labels: ['No tickets in sprint'],
+        datasets: [{ data: [1], backgroundColor: ['#e2e8f0'], borderWidth: 0 }],
+      };
+    }
+    return {
+      labels: ['Done / resolved', 'Remaining'],
+      datasets: [
+        {
+          data: [done, rem],
+          backgroundColor: ['#22c55e', '#cbd5e1'],
+          borderWidth: 0,
+        },
+      ],
+    };
+  }, [analytics]);
+
+  const priorityChartData = useMemo(() => {
+    if (!analytics?.tickets?.length) return null;
+    const m: Record<string, number> = {};
+    for (const t of analytics.tickets) {
+      const p = (t.priority || 'unknown').toLowerCase();
+      m[p] = (m[p] ?? 0) + 1;
+    }
+    const entries = Object.entries(m).sort(([a], [b]) => a.localeCompare(b));
+    const tone = (k: string): string => {
+      if (k === 'critical') return '#e9a0a7';
+      if (k === 'high') return '#f2c28c';
+      if (k === 'medium') return '#8fb0ea';
+      if (k === 'low') return '#8fcab3';
+      return '#a7b2c6';
+    };
+    return {
+      labels: entries.map(([k]) => humanizeToken(k)),
+      datasets: [
+        {
+          label: '',
+          data: entries.map(([, v]) => v),
+          backgroundColor: entries.map(([k]) => tone(k)),
+          borderRadius: 6,
+          borderSkipped: false,
+          barThickness: 22,
+        },
+      ],
+    };
+  }, [analytics]);
+
   return (
     <motion.article
       key={viewKey}
@@ -293,18 +392,35 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
                 <span>{formatSprintDay(shownSprint.end_date)}</span>
               </p>
             </div>
+            <Button
+              type="button"
+              label="Open monitoring dashboard"
+              icon="pi pi-chart-bar"
+              className="sprints-member-dashboard-btn"
+              onClick={() => void openMonitoringDashboard()}
+            />
           </div>
 
           <div className="sprints-member-section-head">
             <h3>Work in this sprint</h3>
-            <span className="sprints-member-count">
-              {ticketsInSprint.length} {ticketsInSprint.length === 1 ? 'item' : 'items'}
-            </span>
+            <div className="sprints-member-head-actions">
+              <span className="sprints-member-count">
+                {ticketsInSprint.length} {ticketsInSprint.length === 1 ? 'item' : 'items'}
+              </span>
+              <button type="button" className="sprints-member-link-btn" onClick={() => void openMonitoringDashboard()}>
+                View dashboard
+              </button>
+            </div>
           </div>
 
           <div className="sprints-member-ticket-list">
             {ticketsInSprint.map((t) => (
-              <div key={t.id} className="sprints-member-ticket-row">
+              <button
+                key={t.id}
+                type="button"
+                className="sprints-member-ticket-row"
+                onClick={() => setSelectedTicket(t)}
+              >
                 <div className="sprints-member-ticket-main">
                   <span className="sprints-member-ticket-ref">{t.public_reference ?? `#${t.ticket_number}`}</span>
                   <span className="sprints-member-ticket-title">{t.title}</span>
@@ -314,7 +430,7 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
                   severity={sprintTicketStatusSeverity(t.status)}
                   className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(t.status)}`}
                 />
-              </div>
+              </button>
             ))}
             {!ticketsInSprint.length ? (
               <p className="sprints-muted">No tickets linked to this sprint yet.</p>
@@ -322,6 +438,215 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
           </div>
         </section>
       ) : null}
+
+      <Dialog
+        header={selectedTicket ? `${selectedTicket.public_reference ?? `#${selectedTicket.ticket_number}`} · Ticket details` : 'Ticket details'}
+        visible={Boolean(selectedTicket)}
+        onHide={() => setSelectedTicket(null)}
+        style={{ width: 'min(760px, 95vw)' }}
+        className="sprints-member-ticket-dialog"
+      >
+        {selectedTicket ? (
+          <div className="sprints-member-ticket-detail">
+            <div className="sprints-member-ticket-detail-grid">
+              <div className="sprints-member-ticket-detail-item">
+                <span className="sprints-member-ticket-detail-label">Status</span>
+                <Tag
+                  value={selectedTicket.status.replace(/_/g, ' ')}
+                  severity={sprintTicketStatusSeverity(selectedTicket.status)}
+                  className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(selectedTicket.status)}`}
+                />
+              </div>
+              <div className="sprints-member-ticket-detail-item">
+                <span className="sprints-member-ticket-detail-label">Priority</span>
+                <Tag value={humanizeToken(selectedTicket.priority)} severity={ticketPrioritySeverity(selectedTicket.priority)} rounded />
+              </div>
+              <div className="sprints-member-ticket-detail-item">
+                <span className="sprints-member-ticket-detail-label">Type</span>
+                <strong>{humanizeToken(selectedTicket.type)}</strong>
+              </div>
+              <div className="sprints-member-ticket-detail-item">
+                <span className="sprints-member-ticket-detail-label">Project</span>
+                <strong>{selectedTicket.project_id}</strong>
+              </div>
+              <div className="sprints-member-ticket-detail-item">
+                <span className="sprints-member-ticket-detail-label">Assignees</span>
+                <strong>{selectedTicket.assignee_names?.length ? selectedTicket.assignee_names.join(', ') : 'Unassigned'}</strong>
+              </div>
+              <div className="sprints-member-ticket-detail-item">
+                <span className="sprints-member-ticket-detail-label">Due date</span>
+                <strong>{formatDateTime(selectedTicket.due_date)}</strong>
+              </div>
+            </div>
+            <div className="sprints-member-ticket-detail-item sprints-member-ticket-detail-item--full">
+              <span className="sprints-member-ticket-detail-label">Description</span>
+              <p>{selectedTicket.description?.trim() || 'No description provided.'}</p>
+            </div>
+            <div className="sprints-member-ticket-detail-grid">
+              <div className="sprints-member-ticket-detail-item">
+                <span className="sprints-member-ticket-detail-label">Created</span>
+                <strong>{formatDateTime(selectedTicket.created_at)}</strong>
+              </div>
+              <div className="sprints-member-ticket-detail-item">
+                <span className="sprints-member-ticket-detail-label">Last updated</span>
+                <strong>{formatDateTime(selectedTicket.updated_at)}</strong>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Dialog>
+
+      <Dialog
+        header="Sprint monitoring dashboard"
+        visible={dashboardOpen}
+        onHide={() => {
+          setDashboardOpen(false);
+          setDashboardError(null);
+        }}
+        style={{ width: 'min(980px, 95vw)' }}
+        className="sprints-member-dashboard-dialog"
+      >
+        {dashboardLoading ? <p className="sprints-muted sprints-monitoring-loading-inline">Loading dashboard data…</p> : null}
+        {dashboardError ? (
+          <p className="sprints-error" role="alert">
+            {dashboardError}
+          </p>
+        ) : null}
+        {!dashboardLoading && !dashboardError && analytics ? (
+          <div className="sprints-member-dashboard-shell sprints-monitoring-dashboard">
+            <div className="sprints-monitoring-dashboard-head">
+              <div>
+                <h2 className="sprints-monitoring-dashboard-title">Sprint overview</h2>
+                <p className="sprints-monitoring-hero-meta">
+                  <strong>{shownSprint?.title ?? 'Current sprint'}</strong>
+                  {shownSprint ? (
+                    <>
+                      <span className="sprints-monitoring-hero-dot" aria-hidden>
+                        ·
+                      </span>
+                      {formatSprintRange(shownSprint.start_date, shownSprint.end_date)}
+                    </>
+                  ) : null}
+                </p>
+              </div>
+            </div>
+
+            <div className="sprints-charts-grid">
+              <div className="sprints-chart-card sprints-chart-card--status">
+                <h3 className="sprints-chart-card-title">Tickets by status</h3>
+                <div className="sprints-chart-canvas">
+                  {statusChartData ? (
+                    <Chart key="member-st" type="doughnut" data={statusChartData} options={sprintDoughnutOptions} className="sprints-chart" />
+                  ) : (
+                    <p className="sprints-muted sprints-chart-empty">No status data yet.</p>
+                  )}
+                </div>
+              </div>
+              <div className="sprints-chart-card sprints-chart-card--completion">
+                <h3 className="sprints-chart-card-title">Completion mix</h3>
+                <p className="sprints-chart-card-hint">Closed + resolved vs everything else</p>
+                <div className="sprints-chart-canvas">
+                  {completionChartData ? (
+                    <Chart key="member-co" type="doughnut" data={completionChartData} options={sprintDoughnutOptions} className="sprints-chart" />
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="sprints-monitoring-focus-row">
+              <div className="sprints-chart-card sprints-chart-card--priority">
+                <h3 className="sprints-chart-card-title">Tickets by priority</h3>
+                <div className="sprints-chart-canvas sprints-chart-canvas--bar">
+                  {priorityChartData ? (
+                    <Chart key="member-pr" type="bar" data={priorityChartData} options={sprintBarOptions} className="sprints-chart" />
+                  ) : (
+                    <p className="sprints-muted sprints-chart-empty">No tickets to chart.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="sprints-analytics sprints-analytics--panel">
+                <div className="sprints-analytics-kpis">
+                  <div className="sprints-kpi">
+                    <span className="sprints-kpi-label">Tickets</span>
+                    <span className="sprints-kpi-value">{analytics.total_tickets}</span>
+                  </div>
+                  <div className="sprints-kpi">
+                    <span className="sprints-kpi-label">Done / resolved</span>
+                    <span className="sprints-kpi-value">
+                      {analytics.tickets_done} / {analytics.total_tickets}
+                    </span>
+                  </div>
+                  <div className="sprints-kpi">
+                    <span className="sprints-kpi-label">Remaining</span>
+                    <span className="sprints-kpi-value">{analytics.tickets_remaining}</span>
+                  </div>
+                </div>
+                <div className="sprints-progress-wrap">
+                  <span className="sprints-progress-label">Progress</span>
+                  <ProgressBar value={analytics.progress_percent} showValue={false} className="sprints-progress-bar" />
+                </div>
+                <h3 className="sprints-subheading">By status</h3>
+                <div className="sprints-status-grid">
+                  {statusEntries.map(([st, count]) => (
+                    <div key={st} className="sprints-status-cell">
+                      <span className="sprints-status-name">{humanizeToken(st)}</span>
+                      <span className="sprints-status-count">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <section className="sprints-monitoring-members" aria-label="Active members">
+              <h3 className="sprints-monitoring-section-title">People on this sprint</h3>
+              <p className="sprints-monitoring-section-sub">Everyone assigned to at least one ticket in this sprint.</p>
+              {(analytics.active_members ?? []).length ? (
+                <ul className="sprints-monitoring-member-chips">
+                  {(analytics.active_members ?? []).map((m) => (
+                    <li key={m.id}>
+                      <span className="sprints-monitoring-member-chip" title={m.name}>
+                        <span className="sprints-monitoring-member-initials" aria-hidden>
+                          {m.name
+                            .split(/\s+/)
+                            .map((x) => x[0]?.toUpperCase() ?? '')
+                            .join('')
+                            .slice(0, 2)}
+                        </span>
+                        <span className="sprints-monitoring-member-name">{m.name}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="sprints-muted">No assignees yet for this sprint.</p>
+              )}
+            </section>
+
+            <section className="sprints-monitoring-tickets" aria-label="Sprint tickets">
+              <h3 className="sprints-monitoring-section-title">Tickets in this sprint</h3>
+              <div className="sprints-monitoring-table-shell">
+                <DataTable value={analytics.tickets ?? []} dataKey="id" className="user-table sprints-monitoring-table" stripedRows size="small">
+                  <Column field="public_reference" header="Ticket" style={{ width: '130px' }} />
+                  <Column field="title" header="Title" />
+                  <Column
+                    field="status"
+                    header="Status"
+                    body={(row: { status: string }) => (
+                      <Tag
+                        value={row.status.replace(/_/g, ' ')}
+                        severity={sprintTicketStatusSeverity(row.status)}
+                        className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(row.status)}`}
+                      />
+                    )}
+                    style={{ width: '140px' }}
+                  />
+                </DataTable>
+              </div>
+            </section>
+          </div>
+        ) : null}
+      </Dialog>
     </motion.article>
   );
 }

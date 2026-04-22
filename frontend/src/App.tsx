@@ -22,9 +22,13 @@ import {
   getProjectsRequest,
   getTicketConfigurationRequest,
   getCurrentUserRequest,
+  getApprovalNotificationsRequest,
   getTicketsRequest,
   getUsersRequest,
   patchTicketStatusRequest,
+  acknowledgeTicketApprovalRequest,
+  markApprovalNotificationReadRequest,
+  deleteApprovalNotificationRequest,
   updateTicketRequest,
   loginRequest,
   type CustomerContact,
@@ -32,19 +36,22 @@ import {
   type ProjectRecord,
   type ProjectStatus,
   type TicketConfigurationCreatePayload,
+  type TicketApprovalNotificationRecord,
   type TicketConfigurationRecord,
   type TicketCreatePayload,
   type TicketRecord,
   type TicketStatus,
   type TicketUpdatePayload,
   updateCustomerRequest,
+  updateCurrentUserPasswordRequest,
+  updateCurrentUserRequest,
   updateProjectRequest,
   updateTicketConfigurationRequest,
   updateUserPasswordRequest,
   updateUserRequest,
   patchEventMilestoneRequest,
 } from './lib/api';
-import type { BackendRole, CalendarEventRecord, UserRecord } from './lib/api';
+import type { BackendRole, CalendarEventRecord, ThemePreference, UserRecord } from './lib/api';
 import { ModuleSidebar } from './components/layout/ModuleSidebar';
 import { TopHeader } from './components/layout/TopHeader';
 import { CustomerManagementSection } from './features/customer-management/CustomerManagementSection';
@@ -165,6 +172,8 @@ const projectStatusSeverities: Record<ProjectStatus, 'success' | 'warning' | 'in
   archived: 'contrast',
 };
 
+const DEFAULT_THEME: ThemePreference = 'light';
+
 const initialProjectForm = {
   name: '',
   description: '',
@@ -262,6 +271,10 @@ function App() {
   const [ticketViewMode, setTicketViewMode] = useState<'list' | 'kanban'>('list');
   const [assignableUsers, setAssignableUsers] = useState<UserRecord[]>([]);
   const [sessionProfile, setSessionProfile] = useState<UserRecord | null>(null);
+  const [pendingApprovalNotifications, setPendingApprovalNotifications] = useState<TicketApprovalNotificationRecord[]>([]);
+  const [notificationBusyId, setNotificationBusyId] = useState<string | null>(null); // request id
+  const [notificationReadBusyId, setNotificationReadBusyId] = useState<string | null>(null); // notification id
+  const [notificationDeleteBusyId, setNotificationDeleteBusyId] = useState<string | null>(null); // notification id
 
   const topNav = roleTopNav[role];
   const selectedPage = useMemo(
@@ -389,6 +402,7 @@ function App() {
   );
 
   const ticketWorkspaceUserId = sessionProfile?.id ?? leadCurrentUserId;
+  const activeTheme: ThemePreference = sessionProfile?.theme_preference ?? DEFAULT_THEME;
 
   const loadCalendarEventsForRange = useCallback(async (from: string, to: string) => {
     calendarRangeRef.current = { from, to };
@@ -462,14 +476,16 @@ function App() {
     if (role === 'teamLead') {
       void loadCustomers();
     }
-    if (role === 'teamLead' || role === 'teamMember') {
-      void getCurrentUserRequest()
-        .then(setSessionProfile)
-        .catch(() => setSessionProfile(null));
-    } else {
-      setSessionProfile(null);
-    }
+    void getCurrentUserRequest()
+      .then(setSessionProfile)
+      .catch(() => setSessionProfile(null));
+    void loadTicketsForSummary();
+    void loadAllCalendarEvents();
   }, [isAuthenticated, role]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-app-theme', activeTheme);
+  }, [activeTheme]);
 
   useEffect(() => {
     if (!isAuthenticated || role !== 'admin') {
@@ -583,6 +599,15 @@ function App() {
     }
   }
 
+  async function loadTicketsForSummary() {
+    try {
+      const data = await getTicketsRequest(role === 'teamMember' ? { assignee_me: true } : undefined);
+      setTickets([...data].sort((a, b) => b.ticket_number - a.ticket_number));
+    } catch {
+      setTickets([]);
+    }
+  }
+
   async function loadAssignableUsersForTickets() {
     try {
       const data = await getAssignableUsersRequest();
@@ -601,6 +626,73 @@ function App() {
     }
   }
 
+  const loadPendingApprovalNotifications = useCallback(async () => {
+    if (!isAuthenticated || role !== 'teamLead') {
+      setPendingApprovalNotifications([]);
+      return;
+    }
+    try {
+      const rows = await getApprovalNotificationsRequest();
+      setPendingApprovalNotifications(rows);
+    } catch {
+      setPendingApprovalNotifications([]);
+    }
+  }, [isAuthenticated, role]);
+
+  const handleAcknowledgeApprovalFromHeader = useCallback(
+    async (requestId: string) => {
+      setNotificationBusyId(requestId);
+      try {
+        await acknowledgeTicketApprovalRequest(requestId);
+        await loadPendingApprovalNotifications();
+        if (selectedPage.id === 'tickets') {
+          await loadTicketsForLead();
+        }
+      } finally {
+        setNotificationBusyId(null);
+      }
+    },
+    [loadPendingApprovalNotifications, selectedPage.id],
+  );
+
+  const handleMarkNotificationRead = useCallback(
+    async (notificationId: string) => {
+      setNotificationReadBusyId(notificationId);
+      try {
+        await markApprovalNotificationReadRequest(notificationId);
+        await loadPendingApprovalNotifications();
+      } finally {
+        setNotificationReadBusyId(null);
+      }
+    },
+    [loadPendingApprovalNotifications],
+  );
+
+  const handleDeleteNotification = useCallback(
+    async (notificationId: string) => {
+      setNotificationDeleteBusyId(notificationId);
+      try {
+        await deleteApprovalNotificationRequest(notificationId);
+        await loadPendingApprovalNotifications();
+      } finally {
+        setNotificationDeleteBusyId(null);
+      }
+    },
+    [loadPendingApprovalNotifications],
+  );
+
+  useEffect(() => {
+    if (!isAuthenticated || role !== 'teamLead') {
+      setPendingApprovalNotifications([]);
+      return;
+    }
+    void loadPendingApprovalNotifications();
+    const timer = window.setInterval(() => {
+      void loadPendingApprovalNotifications();
+    }, 20000);
+    return () => window.clearInterval(timer);
+  }, [isAuthenticated, role, loadPendingApprovalNotifications]);
+
   const handleLeadCreateTicket = useCallback(async (payload: TicketCreatePayload) => {
     return createTicketRequest(payload);
   }, []);
@@ -611,6 +703,35 @@ function App() {
 
   const handleLeadPatchTicketStatus = useCallback(async (id: string, status: TicketStatus, comment?: string | null) => {
     return patchTicketStatusRequest(id, status, comment);
+  }, []);
+
+  const handleUpdateCurrentUserProfile = useCallback(
+    async (payload: { name: string; email: string; avatar_url?: string | null }) => {
+      const updated = await updateCurrentUserRequest(payload);
+      setSessionProfile(updated);
+    },
+    [],
+  );
+
+  const handleUpdateThemePreference = useCallback(
+    async (theme: ThemePreference) => {
+      const current = sessionProfile;
+      if (!current) {
+        throw new Error('Profile not available');
+      }
+      const updated = await updateCurrentUserRequest({
+        name: current.name,
+        email: current.email,
+        avatar_url: current.avatar_url ?? null,
+        theme_preference: theme,
+      });
+      setSessionProfile(updated);
+    },
+    [sessionProfile],
+  );
+
+  const handleUpdateCurrentUserPassword = useCallback(async (newPassword: string) => {
+    await updateCurrentUserPasswordRequest(newPassword);
   }, []);
 
   async function loadTicketConfigurations() {
@@ -1231,7 +1352,7 @@ function App() {
         onPatchStatus={handleLeadPatchTicketStatus}
         ticketRole={isLead ? 'lead' : 'member'}
         canCreateTickets={isLeadCreateModule}
-        canEditTickets={isLead}
+        canEditTickets={isLead || role === 'teamMember'}
       />
     );
   }
@@ -1391,9 +1512,32 @@ function App() {
                 }
               }}
               currentUserAvatar={currentUserAvatar}
+              currentUserAvatarUrl={sessionProfile?.avatar_url ?? null}
+              currentThemePreference={sessionProfile?.theme_preference ?? DEFAULT_THEME}
               currentUserName={currentUserName}
               currentUserRoleLabel={roleLabels[role]}
               currentUserIdentifier={currentUserIdentifier}
+              currentUserId={sessionProfile?.id}
+              currentUserEmail={sessionProfile?.email ?? ''}
+              currentUserCreatedAt={sessionProfile?.created_at ?? ''}
+              tickets={tickets}
+              events={allCalendarEvents}
+              notifications={pendingApprovalNotifications}
+              notificationBusyId={notificationBusyId}
+              notificationReadBusyId={notificationReadBusyId}
+              notificationDeleteBusyId={notificationDeleteBusyId}
+              onAcknowledgeNotification={(requestId) => {
+                void handleAcknowledgeApprovalFromHeader(requestId);
+              }}
+              onMarkNotificationRead={(notificationId) => {
+                void handleMarkNotificationRead(notificationId);
+              }}
+              onDeleteNotification={(notificationId) => {
+                void handleDeleteNotification(notificationId);
+              }}
+              onUpdateProfile={handleUpdateCurrentUserProfile}
+              onUpdateThemePreference={handleUpdateThemePreference}
+              onUpdatePassword={handleUpdateCurrentUserPassword}
               onLogout={logout}
             />
 

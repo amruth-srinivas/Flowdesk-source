@@ -38,6 +38,16 @@ function humanize(s: string): string {
   return s.replace(/_/g, ' ');
 }
 
+function initials(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return 'U';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
 function toYmd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -112,6 +122,7 @@ export function TicketCreateForm({
     () => assignableUsers.map((u) => ({ label: `${u.name} (${u.employee_id})`, value: u.id })),
     [assignableUsers],
   );
+  const assigneeById = useMemo(() => new Map(assignableUsers.map((u) => [u.id, u])), [assignableUsers]);
 
   const customerOptions = useMemo(
     () => [{ label: 'None', value: null }, ...customers.map((c) => ({ label: c.name, value: c.id }))],
@@ -263,6 +274,36 @@ export function TicketCreateForm({
                 filter
                 placeholder="Select users"
                 maxSelectedLabels={3}
+                itemTemplate={(opt) => {
+                  const user = assigneeById.get(String(opt.value));
+                  const label = user ? `${user.name} (${user.employee_id})` : String(opt.label ?? '');
+                  return (
+                    <div className="assignee-option-row">
+                      {user?.avatar_url ? (
+                        <img src={user.avatar_url} alt={user.name} className="assignee-option-avatar" />
+                      ) : (
+                        <span className="assignee-option-avatar assignee-option-avatar--fallback">
+                          {initials(user?.name ?? label)}
+                        </span>
+                      )}
+                      <span>{label}</span>
+                    </div>
+                  );
+                }}
+                selectedItemTemplate={(value) => {
+                  const user = assigneeById.get(String(value));
+                  if (!user) return String(value);
+                  return (
+                    <div className="assignee-chip-content">
+                      {user.avatar_url ? (
+                        <img src={user.avatar_url} alt={user.name} className="assignee-chip-avatar" />
+                      ) : (
+                        <span className="assignee-chip-avatar assignee-chip-avatar--fallback">{initials(user.name)}</span>
+                      )}
+                      <span>{user.name}</span>
+                    </div>
+                  );
+                }}
               />
             </div>
           </div>

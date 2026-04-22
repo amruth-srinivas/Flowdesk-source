@@ -14,9 +14,16 @@ import { Tag } from 'primereact/tag';
 import { Toast } from 'primereact/toast';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TicketDetailTabs } from './TicketDetailTabs';
+import { getSprintsRequest } from '../../lib/api';
+import {
+  createTicketApprovalRequest,
+  getPendingTicketApprovalRequests,
+  type TicketApprovalRequestRecord,
+} from '../../lib/api';
 import type {
   CustomerRecord,
   ProjectRecord,
+  SprintRecord,
   TicketConfigurationRecord,
   TicketCreatePayload,
   TicketRecord,
@@ -158,6 +165,31 @@ function formatAssigneeLabels(t: TicketRecord, userLookup: Map<string, string>):
   return ids.map((id) => userLookup.get(id) ?? '').filter(Boolean).join(', ');
 }
 
+function getClosedByLabel(t: TicketRecord, userLookup: Map<string, string>): string {
+  const audit = t as TicketRecord & {
+    resolved_by_name?: string | null;
+    resolved_by?: string | null;
+    closed_by_name?: string | null;
+    closed_by?: string | null;
+  };
+  const resolvedBy =
+    audit.resolved_by_name?.trim() ||
+    (audit.resolved_by ? userLookup.get(audit.resolved_by) ?? '' : '');
+  const closedBy =
+    audit.closed_by_name?.trim() ||
+    (audit.closed_by ? userLookup.get(audit.closed_by) ?? '' : '');
+  if (t.status === 'closed' && resolvedBy && closedBy && resolvedBy !== closedBy) {
+    return `${resolvedBy} + ${closedBy}`;
+  }
+  if (audit.closed_by_name?.trim()) {
+    return audit.closed_by_name.trim();
+  }
+  if (audit.closed_by && userLookup.get(audit.closed_by)) {
+    return userLookup.get(audit.closed_by) ?? '—';
+  }
+  return t.status === 'closed' ? '—' : 'Not closed';
+}
+
 function filterByModule(
   tickets: TicketRecord[],
   module: string,
@@ -290,9 +322,13 @@ export function TicketManagementSection({
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<Date | null>(null);
+  const [sprints, setSprints] = useState<SprintRecord[]>([]);
+  const [approvalRequests, setApprovalRequests] = useState<TicketApprovalRequestRecord[]>([]);
 
   const projectLookup = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
   const userLookup = useMemo(() => new Map(assignableUsers.map((u) => [u.id, u.name])), [assignableUsers]);
+  const sprintLookup = useMemo(() => new Map(sprints.map((s) => [s.id, s.title])), [sprints]);
+  const approvalByTicket = useMemo(() => new Map(approvalRequests.map((r) => [r.ticket_id, r])), [approvalRequests]);
 
   const configByType = useMemo(
     () => new Map(ticketConfigurations.map((c) => [c.ticket_type, c])),
@@ -392,6 +428,38 @@ export function TicketManagementSection({
     setDueDate(parseDue(row.due_date));
     setFormError('');
   }, []);
+
+  const loadApprovalRequests = useCallback(async () => {
+    try {
+      const rows = await getPendingTicketApprovalRequests();
+      setApprovalRequests(rows);
+    } catch {
+      setApprovalRequests([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadApprovalRequests();
+  }, [loadApprovalRequests, viewKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sprintList = await getSprintsRequest();
+        if (!cancelled) {
+          setSprints(sprintList);
+        }
+      } catch {
+        if (!cancelled) {
+          setSprints([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [viewKey]);
 
   useEffect(() => {
     if (panel === 'edit' && editingTicket) {
@@ -581,6 +649,28 @@ export function TicketManagementSection({
         setStatusBusy(null);
       }
     }
+  }
+
+  async function requestLeadApproval(ticket: TicketRecord) {
+    const existing = approvalRequests.find((r) => r.ticket_id === ticket.id);
+    if (existing) {
+      statusToastRef.current?.show({
+        severity: 'warn',
+        summary: 'Already requested',
+        detail: 'Approval request has already been sent to lead for this ticket.',
+        life: 3500,
+      });
+      return;
+    }
+    await createTicketApprovalRequest(ticket.id);
+    statusToastRef.current?.show({
+      severity: 'success',
+      summary: 'Approval requested',
+      detail: 'Lead has been notified to review and close this ticket.',
+      life: 4500,
+    });
+    onRefresh();
+    await loadApprovalRequests();
   }
 
   const detailTitle = panel === 'create' ? 'New ticket' : panel === 'edit' && editingTicket ? displayTicketRef(editingTicket) : 'Ticket';
@@ -841,7 +931,8 @@ export function TicketManagementSection({
                 const classes = [
                   row.id === editingId ? 'tickets-row-selected' : '',
                   `tickets-row-priority-${row.priority}`,
-                  row.status === 'resolved' || row.status === 'closed' ? 'tickets-row-resolved' : '',
+                  row.status === 'resolved' ? 'tickets-row-resolved' : '',
+                  row.status === 'closed' ? 'tickets-row-closed' : '',
                 ];
                 return classes.filter(Boolean).join(' ');
               }}
@@ -862,15 +953,6 @@ export function TicketManagementSection({
                   )}
                 />
               )}
-              <Column
-                field="title"
-                header="Title"
-                sortable
-                headerClassName="tickets-col-title"
-                bodyClassName="tickets-col-title"
-                style={{ minWidth: '200px' }}
-                body={(row: TicketRecord) => <span className="tickets-title-cell">{row.title}</span>}
-              />
               {isLeadCreateModule ? null : (
                 <Column
                   header="Project"
@@ -882,6 +964,20 @@ export function TicketManagementSection({
                   )}
                 />
               )}
+              <Column
+                header="Title"
+                headerClassName="tickets-col-description"
+                bodyClassName="tickets-col-description"
+                style={{ minWidth: '220px', width: '260px' }}
+                body={(row: TicketRecord) => (
+                  <span
+                    className="tickets-description-cell"
+                    title={row.title}
+                  >
+                    {row.title}
+                  </span>
+                )}
+              />
               {isLeadCreateModule ? null : (
                 <Column
                   header="Assignees"
@@ -912,6 +1008,19 @@ export function TicketManagementSection({
               />
               {isLeadCreateModule ? null : (
                 <Column
+                  header="Sprint"
+                  headerClassName="tickets-col-sprint"
+                  bodyClassName="tickets-col-sprint"
+                  style={{ minWidth: '132px', width: '152px' }}
+                  body={(row: TicketRecord) => (
+                    <span className="tickets-project-cell">
+                      {row.sprint_id ? sprintLookup.get(row.sprint_id) ?? row.sprint_id : 'Backlog'}
+                    </span>
+                  )}
+                />
+              )}
+              {isLeadCreateModule ? null : (
+                <Column
                   header="Opened"
                   headerClassName="tickets-col-opened"
                   bodyClassName="tickets-col-opened"
@@ -921,6 +1030,19 @@ export function TicketManagementSection({
                   body={(row: TicketRecord) => (
                     <span className="tickets-date-cell" title={row.created_at ?? undefined}>
                       {formatTicketListDate(row.created_at)}
+                    </span>
+                  )}
+                />
+              )}
+              {isLeadCreateModule ? null : (
+                <Column
+                  header="Closed by"
+                  headerClassName="tickets-col-closedby"
+                  bodyClassName="tickets-col-closedby"
+                  style={{ minWidth: '132px', width: '152px' }}
+                  body={(row: TicketRecord) => (
+                    <span className="tickets-assignee-cell">
+                      {getClosedByLabel(row, userLookup)}
                     </span>
                   )}
                 />
@@ -1380,6 +1502,11 @@ export function TicketManagementSection({
                         ticket={editingTicket}
                         currentUserId={currentUserId}
                         canPostInternalNotes={ticketRole === 'lead'}
+                        showApprovalAction={ticketRole === 'member' && editingTicket.status === 'resolved'}
+                        approvalRequested={approvalByTicket.has(editingTicket.id)}
+                        onRequestApproval={() => {
+                          void requestLeadApproval(editingTicket);
+                        }}
                         onThreadChanged={onRefresh}
                       />
                     </div>

@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.core.security import hash_password
 from app.dependencies.auth import get_current_admin, get_current_lead, get_current_member
 from app.models import User
-from app.schemas.users import UserCreate, UserPasswordUpdate, UserResponse, UserUpdate, UserUpdateRole
+from app.schemas.users import UserCreate, UserPasswordUpdate, UserResponse, UserSelfUpdate, UserUpdate, UserUpdateRole
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -26,6 +26,7 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), _=Depends(ge
         email=payload.email,
         password_hash=hash_password(payload.password),
         role=payload.role or UserRole.MEMBER,
+        theme_preference="light",
     )
     db.add(user)
     db.commit()
@@ -42,6 +43,27 @@ def get_users(db: Session = Depends(get_db), _=Depends(get_current_admin)):
 def get_current_profile(user: User = Depends(get_current_member)):
     """Current user profile (id for ticket filters and UI)."""
     return user
+
+
+@router.put("/me", response_model=UserResponse)
+def update_current_profile(payload: UserSelfUpdate, db: Session = Depends(get_db), current: User = Depends(get_current_member)):
+    email_owner = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
+    if email_owner and email_owner.id != current.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
+    current.name = payload.name
+    current.email = payload.email
+    current.avatar_url = payload.avatar_url.strip() if payload.avatar_url else None
+    if payload.theme_preference is not None:
+        current.theme_preference = payload.theme_preference
+    db.commit()
+    db.refresh(current)
+    return current
+
+
+@router.patch("/me/password", status_code=status.HTTP_204_NO_CONTENT)
+def change_current_password(payload: UserPasswordUpdate, db: Session = Depends(get_db), current: User = Depends(get_current_member)):
+    current.password_hash = hash_password(payload.password)
+    db.commit()
 
 
 @router.get("/assignable", response_model=list[UserResponse])
@@ -70,6 +92,9 @@ def update_user(user_id: str, payload: UserUpdate, db: Session = Depends(get_db)
     user.email = payload.email
     user.role = payload.role or UserRole.MEMBER
     user.is_active = payload.is_active
+    user.avatar_url = payload.avatar_url.strip() if payload.avatar_url else None
+    if payload.theme_preference is not None:
+        user.theme_preference = payload.theme_preference
     db.commit()
     db.refresh(user)
     return user

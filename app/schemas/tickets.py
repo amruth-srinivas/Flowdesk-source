@@ -50,11 +50,16 @@ class TicketResponse(BaseModel):
     project_id: UUID
     created_by: UUID
     created_by_name: str | None = None
+    created_by_avatar_url: str | None = None
     assignee_ids: list[UUID] = Field(default_factory=list)
     assignee_names: list[str] = Field(default_factory=list)
     customer_id: UUID | None
     due_date: date | None = None
     closed_at: datetime | None = None
+    resolved_by: UUID | None = None
+    resolved_by_name: str | None = None
+    closed_by: UUID | None = None
+    closed_by_name: str | None = None
     sprint_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
@@ -85,6 +90,7 @@ class TicketCommentResponse(BaseModel):
     ticket_id: UUID
     author_id: UUID
     author_name: str
+    author_avatar_url: str | None = None
     body: str
     is_internal: bool
     created_at: datetime
@@ -98,6 +104,7 @@ class TicketHistoryResponse(BaseModel):
     id: UUID
     changed_by: UUID
     changer_name: str
+    changer_avatar_url: str | None = None
     field_name: str
     old_value: str | None
     new_value: str | None
@@ -113,6 +120,7 @@ class ResolutionResponse(BaseModel):
     ticket_id: UUID
     resolved_by: UUID
     resolver_name: str
+    resolver_avatar_url: str | None = None
     summary: str
     root_cause: str | None
     steps_taken: str | None
@@ -132,7 +140,34 @@ class TicketAttachmentResponse(BaseModel):
     mime_type: str
     uploaded_by: UUID
     uploader_name: str
+    uploader_avatar_url: str | None = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class TicketApprovalRequestResponse(BaseModel):
+    id: UUID
+    ticket_id: UUID
+    ticket_reference: str | None = None
+    ticket_title: str
+    ticket_status: TicketStatus
+    requested_by: UUID
+    requested_by_name: str
+    requested_at: datetime
+    status: str
+
+    class Config:
+        from_attributes = True
+
+
+class TicketApprovalNotificationResponse(BaseModel):
+    notification_id: UUID
+    request_id: UUID | None = None
+    ticket_id: UUID
+    ticket_reference: str | None = None
+    ticket_title: str
+    requested_by_name: str | None = None
+    requested_at: datetime
+    is_read: bool

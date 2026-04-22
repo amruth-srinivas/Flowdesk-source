@@ -141,9 +141,21 @@ type TicketDetailTabsProps = {
   currentUserId?: string;
   canPostInternalNotes: boolean;
   onThreadChanged: () => void;
+  showApprovalAction?: boolean;
+  approvalRequested?: boolean;
+  onRequestApproval?: () => void;
 };
 
-export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostInternalNotes, onThreadChanged }: TicketDetailTabsProps) {
+export function TicketDetailTabs({
+  viewKey,
+  ticket,
+  currentUserId,
+  canPostInternalNotes,
+  onThreadChanged,
+  showApprovalAction = false,
+  approvalRequested = false,
+  onRequestApproval,
+}: TicketDetailTabsProps) {
   const ticketClosed = ticket.status === 'closed';
 
   const [tabIndex, setTabIndex] = useState(0);
@@ -346,6 +358,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
     title: string;
     subtitle?: string;
     actor?: string;
+    actorAvatarUrl?: string | null;
     kind: 'comment' | 'history' | 'attachment' | 'resolution' | 'created';
     meta?: { attachmentId?: string; attachmentName?: string };
   };
@@ -358,6 +371,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
         title: 'Ticket created',
         subtitle: ticket.title,
         actor: ticket.created_by_name ?? 'Requester',
+        actorAvatarUrl: ticket.created_by_avatar_url,
         kind: 'created',
       },
       ...comments.map((c) => ({
@@ -366,6 +380,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
         title: c.is_internal ? 'Internal note added' : 'Comment added',
         subtitle: plainTextFromHtml(c.body),
         actor: c.author_name,
+        actorAvatarUrl: c.author_avatar_url,
         kind: 'comment' as const,
       })),
       ...history.map((h) => ({
@@ -374,6 +389,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
         title: `${humanize(h.field_name)} changed`,
         subtitle: `${h.old_value ?? '—'} -> ${h.new_value ?? '—'}${h.change_note?.trim() ? `\nComment: ${h.change_note.trim()}` : ''}`,
         actor: h.changer_name,
+        actorAvatarUrl: h.changer_avatar_url,
         kind: 'history' as const,
       })),
       ...attachments.map((a) => ({
@@ -382,6 +398,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
         title: 'Attachment uploaded',
         subtitle: `${a.filename} (${(a.file_size_bytes / 1024).toFixed(1)} KB)`,
         actor: a.uploader_name,
+        actorAvatarUrl: a.uploader_avatar_url,
         kind: 'attachment' as const,
         meta: { attachmentId: a.id, attachmentName: a.filename },
       })),
@@ -393,6 +410,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
         title: 'Resolution updated',
         subtitle: plainTextFromHtml(resolutionInfo.summary),
         actor: resolutionInfo.resolver_name,
+        actorAvatarUrl: resolutionInfo.resolver_avatar_url,
         kind: 'resolution',
       });
     }
@@ -406,6 +424,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
           id: `orig-${ticket.id}`,
           userId: ticket.created_by,
           author: ticket.created_by_name ?? 'Requester',
+          authorAvatarUrl: ticket.created_by_avatar_url,
           at: ticket.created_at,
           body: ticket.description?.trim() || '—',
           kind: 'request' as const,
@@ -415,6 +434,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
           id: `comment-${c.id}`,
           userId: c.author_id,
           author: c.author_name,
+          authorAvatarUrl: c.author_avatar_url,
           at: c.created_at,
           body: c.body,
           kind: c.is_internal ? ('internal' as const) : ('reply' as const),
@@ -446,6 +466,21 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
   return (
     <div className="ticket-detail-tabs">
       {error ? <p className="error-text ticket-detail-tabs-error">{error}</p> : null}
+      {showApprovalAction ? (
+        <div className="ticket-detail-approval-bar">
+          <span className="ticket-detail-approval-hint">
+            Ticket is resolved. Request lead approval to close it.
+          </span>
+          <Button
+            type="button"
+            label={approvalRequested ? 'Approval requested' : 'Get approval from lead'}
+            icon="pi pi-send"
+            className="ticket-detail-approval-btn"
+            disabled={approvalRequested || ticketClosed}
+            onClick={() => onRequestApproval?.()}
+          />
+        </div>
+      ) : null}
 
       <TabView
         activeIndex={tabIndex}
@@ -466,7 +501,11 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                     className={`ticket-chat-row ${item.mine ? 'ticket-chat-row--mine' : 'ticket-chat-row--theirs'} ticket-chat-row--${item.kind}`}
                   >
                     <div className={`ticket-chat-avatar ${item.mine ? 'ticket-chat-avatar--mine' : 'ticket-chat-avatar--theirs'} ticket-chat-avatar--${item.kind}`}>
-                      <span>{initials(item.author)}</span>
+                      {item.authorAvatarUrl ? (
+                        <img src={item.authorAvatarUrl} alt={item.author} className="ticket-chat-avatar-img" />
+                      ) : (
+                        <span>{initials(item.author)}</span>
+                      )}
                     </div>
                     <div className={`ticket-chat-bubble ${item.mine ? 'ticket-chat-bubble--mine' : 'ticket-chat-bubble--theirs'} ticket-chat-bubble--${item.kind}`}>
                       <header className="ticket-chat-head">
@@ -698,6 +737,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                   className={`ticket-file-label${ticketClosed ? ' ticket-file-label--disabled' : ''}`}
                   aria-disabled={ticketClosed}
                 >
+                  <i className="pi pi-upload" aria-hidden="true" />
                   {ticketClosed ? 'Uploads disabled (ticket closed)' : uploadBusy ? 'Uploading…' : 'Choose file (max 15MB)'}
                 </label>
               </div>
@@ -709,6 +749,7 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                       className="ticket-attachment-link"
                       onClick={() => void handleDownload(a.id, a.filename)}
                     >
+                      <i className="pi pi-paperclip" aria-hidden="true" />
                       {a.filename}
                     </button>
                     <span className="ticket-attachment-meta">
@@ -717,7 +758,11 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
                   </li>
                 ))}
               </ul>
-              {attachments.length === 0 ? <p className="ticket-detail-muted">No attachments yet.</p> : null}
+              {attachments.length === 0 ? (
+                <p className="ticket-detail-muted ticket-attachments-empty">
+                  No attachments yet. Upload a file to keep supporting documents with this ticket.
+                </p>
+              ) : null}
             </div>
           )}
         </TabPanel>
@@ -729,7 +774,13 @@ export function TicketDetailTabs({ viewKey, ticket, currentUserId, canPostIntern
             <div className="ticket-history-timeline">
               {timelineItems.map((item) => (
                 <article key={item.id} className={`ticket-timeline-item ticket-timeline-item--${item.kind}`}>
-                  <div className="ticket-timeline-dot" />
+                  <div className="ticket-timeline-dot">
+                    {item.actorAvatarUrl ? (
+                      <img src={item.actorAvatarUrl} alt={item.actor ?? 'User'} className="ticket-timeline-avatar-img" />
+                    ) : (
+                      <span>{initials(item.actor ?? 'U')}</span>
+                    )}
+                  </div>
                   <div className="ticket-timeline-content">
                     <header className="ticket-timeline-head">
                       <strong>{item.title}</strong>

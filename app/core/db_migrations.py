@@ -367,3 +367,114 @@ def apply_sprint_migrations(engine: Engine) -> None:
                 conn.execute(text("ALTER TABLE tickets ADD COLUMN sprint_id UUID"))
     except Exception as exc:
         logger.warning("Sprint column migration failed: %s", exc)
+
+
+def apply_ticket_closed_by_migration(engine: Engine) -> None:
+    """Add tickets.closed_by for tracking who closed the ticket."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for closed_by migration: %s", exc)
+        return
+
+    if "tickets" not in tables:
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("tickets")}
+    if "closed_by" in columns:
+        return
+
+    logger.info("Adding tickets.closed_by column")
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "postgresql":
+                conn.execute(
+                    text(
+                        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS closed_by UUID REFERENCES users(id)"
+                    )
+                )
+            else:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN closed_by UUID"))
+    except Exception as exc:
+        logger.warning("Ticket closed_by migration failed: %s", exc)
+
+
+def apply_user_avatar_url_migration(engine: Engine) -> None:
+    """Widen users.avatar_url to TEXT for larger data/blob URLs."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for avatar_url migration: %s", exc)
+        return
+
+    if "users" not in tables:
+        return
+
+    if engine.dialect.name != "postgresql":
+        return
+
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT c.data_type, c.character_maximum_length
+                    FROM information_schema.columns c
+                    WHERE c.table_schema = current_schema()
+                      AND c.table_name = 'users'
+                      AND c.column_name = 'avatar_url'
+                    """
+                )
+            ).one_or_none()
+    except Exception as exc:
+        logger.warning("Could not read users.avatar_url metadata: %s", exc)
+        return
+
+    if row is None:
+        return
+
+    data_type, char_max = row[0], row[1]
+    if data_type == "text":
+        return
+    if data_type == "character varying" and (char_max is None or char_max >= 4000):
+        return
+
+    logger.info("Widening users.avatar_url to TEXT")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ALTER COLUMN avatar_url TYPE TEXT"))
+    except Exception as exc:
+        logger.warning("Avatar URL migration failed: %s", exc)
+
+
+def apply_user_theme_preference_migration(engine: Engine) -> None:
+    """Add users.theme_preference for persisted UI theme selection."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for theme preference migration: %s", exc)
+        return
+
+    if "users" not in tables:
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("users")}
+    if "theme_preference" in columns:
+        return
+
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "postgresql":
+                conn.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference VARCHAR(20) NOT NULL DEFAULT 'light'"
+                    )
+                )
+            else:
+                conn.execute(text("ALTER TABLE users ADD COLUMN theme_preference VARCHAR(20) DEFAULT 'light'"))
+                conn.execute(text("UPDATE users SET theme_preference = 'light' WHERE theme_preference IS NULL"))
+    except Exception as exc:
+        logger.warning("Theme preference migration failed: %s", exc)

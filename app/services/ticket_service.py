@@ -70,6 +70,9 @@ def update_ticket_status(
     ticket.status = new_status
     if new_status == TicketStatus.CLOSED:
         ticket.closed_at = datetime.now(timezone.utc)
+        ticket.closed_by = user.id
+    else:
+        ticket.closed_by = None
     note = comment.strip() if comment else None
     db.add(
         TicketHistory(

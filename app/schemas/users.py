@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
@@ -20,6 +21,15 @@ class UserUpdate(BaseModel):
     email: EmailStr
     role: UserRole | None = None
     is_active: bool = True
+    avatar_url: str | None = None
+    theme_preference: Literal["light", "dark", "midnight"] | None = None
+
+
+class UserSelfUpdate(BaseModel):
+    name: str
+    email: EmailStr
+    avatar_url: str | None = None
+    theme_preference: Literal["light", "dark", "midnight"] | None = None
 
 
 class UserUpdateRole(BaseModel):
@@ -37,6 +47,8 @@ class UserResponse(BaseModel):
     email: EmailStr
     role: UserRole
     is_active: bool
+    avatar_url: str | None = None
+    theme_preference: Literal["light", "dark", "midnight"] = "light"
     created_at: datetime
 
     class Config:

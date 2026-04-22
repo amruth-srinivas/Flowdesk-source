@@ -1,4 +1,5 @@
 export type BackendRole = 'ADMIN' | 'LEAD' | 'MEMBER';
+export type ThemePreference = 'light' | 'dark' | 'midnight';
 
 export type LoginResponse = {
   access_token: string;
@@ -14,6 +15,8 @@ export type UserRecord = {
   email: string;
   role: BackendRole;
   is_active: boolean;
+  avatar_url?: string | null;
+  theme_preference?: ThemePreference;
   created_at: string;
 };
 
@@ -31,6 +34,15 @@ export type UserUpdatePayload = {
   email: string;
   role?: BackendRole;
   is_active: boolean;
+  avatar_url?: string | null;
+  theme_preference?: ThemePreference;
+};
+
+export type UserSelfUpdatePayload = {
+  name: string;
+  email: string;
+  avatar_url?: string | null;
+  theme_preference?: ThemePreference;
 };
 
 export type ProjectStatus = 'active' | 'on-hold' | 'completed' | 'archived';
@@ -195,6 +207,24 @@ export async function updateUserPasswordRequest(userId: string, password: string
     body: JSON.stringify({ password }),
   });
 
+  return parseResponse<void>(response);
+}
+
+export async function updateCurrentUserRequest(payload: UserSelfUpdatePayload): Promise<UserRecord> {
+  const response = await fetch(`${API_BASE_URL}/users/me`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<UserRecord>(response);
+}
+
+export async function updateCurrentUserPasswordRequest(password: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/users/me/password`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ password }),
+  });
   return parseResponse<void>(response);
 }
 
@@ -774,11 +804,16 @@ export type TicketRecord = {
   project_id: string;
   created_by: string;
   created_by_name?: string | null;
+  created_by_avatar_url?: string | null;
   assignee_ids: string[];
   assignee_names?: string[];
   customer_id: string | null;
   due_date: string | null;
   closed_at: string | null;
+  resolved_by: string | null;
+  resolved_by_name?: string | null;
+  closed_by: string | null;
+  closed_by_name?: string | null;
   sprint_id: string | null;
   created_at: string;
   updated_at: string;
@@ -831,6 +866,7 @@ export type TicketCommentRecord = {
   ticket_id: string;
   author_id: string;
   author_name: string;
+  author_avatar_url?: string | null;
   body: string;
   is_internal: boolean;
   created_at: string;
@@ -865,6 +901,7 @@ export type TicketHistoryRecord = {
   id: string;
   changed_by: string;
   changer_name: string;
+  changer_avatar_url?: string | null;
   field_name: string;
   old_value: string | null;
   new_value: string | null;
@@ -884,6 +921,7 @@ export type ResolutionRecord = {
   ticket_id: string;
   resolved_by: string;
   resolver_name: string;
+  resolver_avatar_url?: string | null;
   summary: string;
   root_cause: string | null;
   steps_taken: string | null;
@@ -926,6 +964,7 @@ export type TicketAttachmentRecord = {
   mime_type: string;
   uploaded_by: string;
   uploader_name: string;
+  uploader_avatar_url?: string | null;
   created_at: string;
 };
 
@@ -1030,6 +1069,75 @@ export async function patchTicketStatusRequest(
     body: JSON.stringify({ status, comment: comment?.trim() || null }),
   });
   return parseResponse<TicketRecord>(response);
+}
+
+export type TicketApprovalRequestRecord = {
+  id: string;
+  ticket_id: string;
+  ticket_reference: string | null;
+  ticket_title: string;
+  ticket_status: TicketStatus;
+  requested_by: string;
+  requested_by_name: string;
+  requested_at: string;
+  status: string;
+};
+
+export type TicketApprovalNotificationRecord = {
+  notification_id: string;
+  request_id: string | null;
+  ticket_id: string;
+  ticket_reference: string | null;
+  ticket_title: string;
+  requested_by_name: string | null;
+  requested_at: string;
+  is_read: boolean;
+};
+
+export async function createTicketApprovalRequest(ticketId: string): Promise<TicketApprovalRequestRecord> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/approval-request`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketApprovalRequestRecord>(response);
+}
+
+export async function getPendingTicketApprovalRequests(): Promise<TicketApprovalRequestRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/tickets/approval-requests/pending`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketApprovalRequestRecord[]>(response);
+}
+
+export async function acknowledgeTicketApprovalRequest(requestId: string): Promise<TicketRecord> {
+  const response = await fetch(`${API_BASE_URL}/tickets/approval-requests/${requestId}/acknowledge`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketRecord>(response);
+}
+
+export async function getApprovalNotificationsRequest(): Promise<TicketApprovalNotificationRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/tickets/notifications/approval`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketApprovalNotificationRecord[]>(response);
+}
+
+export async function markApprovalNotificationReadRequest(notificationId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/tickets/notifications/${notificationId}/read`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
+}
+
+export async function deleteApprovalNotificationRequest(notificationId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/tickets/notifications/${notificationId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
 }
 
 export type SprintRecord = {

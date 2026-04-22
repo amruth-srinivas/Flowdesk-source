@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -13,9 +14,11 @@ from app.core.database import get_db
 from app.dependencies.auth import get_current_member
 from app.models import (
     Approval,
+    Notification,
+    Project,
     Resolution,
-    Sprint,
     Ticket,
+    TicketApprovalRequest,
     TicketAttachment,
     TicketComment,
     TicketConfiguration,
@@ -26,6 +29,8 @@ from app.schemas.tickets import (
     ApprovalDecision,
     ResolutionCreate,
     ResolutionResponse,
+    TicketApprovalRequestResponse,
+    TicketApprovalNotificationResponse,
     TicketAssign,
     TicketAttachmentResponse,
     TicketCommentCreate,
@@ -77,12 +82,18 @@ def _user_name(db: Session, user_id: UUID) -> str:
     return u.name if u else "Unknown"
 
 
+def _user_avatar_url(db: Session, user_id: UUID) -> str | None:
+    u = db.get(User, user_id)
+    return u.avatar_url if u else None
+
+
 def _resolution_to_response(db: Session, r: Resolution) -> ResolutionResponse:
     return ResolutionResponse(
         id=r.id,
         ticket_id=r.ticket_id,
         resolved_by=r.resolved_by,
         resolver_name=_user_name(db, r.resolved_by),
+        resolver_avatar_url=_user_avatar_url(db, r.resolved_by),
         summary=r.summary,
         root_cause=r.root_cause,
         steps_taken=r.steps_taken,
@@ -95,12 +106,49 @@ def _resolution_to_response(db: Session, r: Resolution) -> ResolutionResponse:
 def _ticket_to_response(db: Session, ticket: Ticket) -> TicketResponse:
     ids = list(ticket.assignee_ids or [])
     names = [_user_name(db, uid) for uid in ids]
+    resolution = db.execute(select(Resolution).where(Resolution.ticket_id == ticket.id)).scalar_one_or_none()
     base = TicketResponse.model_validate(ticket)
     return base.model_copy(
         update={
             "assignee_names": names,
             "created_by_name": _user_name(db, ticket.created_by),
+            "created_by_avatar_url": _user_avatar_url(db, ticket.created_by),
+            "resolved_by": resolution.resolved_by if resolution else None,
+            "resolved_by_name": _user_name(db, resolution.resolved_by) if resolution else None,
+            "closed_by_name": _user_name(db, ticket.closed_by) if ticket.closed_by else None,
         }
+    )
+
+
+def _approval_to_response(db: Session, req: TicketApprovalRequest, ticket: Ticket) -> TicketApprovalRequestResponse:
+    return TicketApprovalRequestResponse(
+        id=req.id,
+        ticket_id=ticket.id,
+        ticket_reference=ticket.public_reference,
+        ticket_title=ticket.title,
+        ticket_status=ticket.status,
+        requested_by=req.requested_by,
+        requested_by_name=_user_name(db, req.requested_by),
+        requested_at=req.requested_at,
+        status=req.status,
+    )
+
+
+def _approval_notification_response(
+    notification: Notification,
+    ticket: Ticket,
+    request: TicketApprovalRequest | None,
+    db: Session,
+) -> TicketApprovalNotificationResponse:
+    return TicketApprovalNotificationResponse(
+        notification_id=notification.id,
+        request_id=request.id if request else None,
+        ticket_id=ticket.id,
+        ticket_reference=ticket.public_reference,
+        ticket_title=ticket.title,
+        requested_by_name=_user_name(db, request.requested_by) if request else None,
+        requested_at=request.requested_at if request else notification.created_at,
+        is_read=notification.is_read,
     )
 
 
@@ -207,6 +255,157 @@ def update_status(ticket_id: str, payload: TicketStatusUpdate, db: Session = Dep
     return _ticket_to_response(db, updated)
 
 
+@router.post("/{ticket_id}/approval-request", response_model=TicketApprovalRequestResponse, status_code=status.HTTP_201_CREATED)
+def request_approval(ticket_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
+    if user.role != UserRole.MEMBER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team members can request approval")
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    _ensure_ticket_access(db, user, ticket)
+    if ticket.status != TicketStatus.RESOLVED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Approval can be requested only for resolved tickets")
+    existing = db.execute(
+        select(TicketApprovalRequest).where(
+            TicketApprovalRequest.ticket_id == ticket.id,
+            TicketApprovalRequest.status == "pending",
+        )
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approval already requested")
+    req = TicketApprovalRequest(ticket_id=ticket.id, requested_by=user.id, status="pending")
+    db.add(req)
+
+    project = db.get(Project, ticket.project_id)
+    project_lead_id = project.lead_id if project else None
+    notify_ids: set[UUID] = set()
+    if project_lead_id and project_lead_id != user.id:
+        notify_ids.add(project_lead_id)
+    if project:
+        leads_admins = db.execute(select(User).where(User.role.in_([UserRole.LEAD, UserRole.ADMIN]))).scalars().all()
+        for candidate in leads_admins:
+            if candidate.id == user.id:
+                continue
+            if candidate.role == UserRole.ADMIN or project.id in accessible_project_ids(db, candidate):
+                notify_ids.add(candidate.id)
+
+    for recipient in notify_ids:
+        db.add(
+            Notification(
+                user_id=recipient,
+                type="ticket_approval_request",
+                title=f"Approval requested for {ticket.public_reference or f'#{ticket.ticket_number}'}",
+                link_url=str(ticket.id),
+                is_read=False,
+            )
+        )
+    db.commit()
+    db.refresh(req)
+    return _approval_to_response(db, req, ticket)
+
+
+@router.get("/approval-requests/pending", response_model=list[TicketApprovalRequestResponse])
+def list_pending_approvals(db: Session = Depends(get_db), user=Depends(get_current_member)):
+    stmt = select(TicketApprovalRequest).where(TicketApprovalRequest.status == "pending").order_by(TicketApprovalRequest.requested_at.desc())
+    if user.role == UserRole.MEMBER:
+        stmt = stmt.where(TicketApprovalRequest.requested_by == user.id)
+    rows = db.execute(stmt).scalars().all()
+    out: list[TicketApprovalRequestResponse] = []
+    for req in rows:
+        ticket = db.get(Ticket, req.ticket_id)
+        if not ticket:
+            continue
+        try:
+            _ensure_ticket_access(db, user, ticket)
+        except HTTPException:
+            continue
+        out.append(_approval_to_response(db, req, ticket))
+    return out
+
+
+@router.post("/approval-requests/{request_id}/acknowledge", response_model=TicketResponse)
+def acknowledge_approval(request_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
+    if user.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin/Lead can acknowledge approval")
+    req = db.get(TicketApprovalRequest, request_id)
+    if not req or req.status != "pending":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pending approval request not found")
+    ticket = db.get(Ticket, req.ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    _ensure_ticket_access(db, user, ticket)
+    if ticket.status != TicketStatus.CLOSED:
+        update_ticket_status(db, ticket, TicketStatus.CLOSED, user, "Lead acknowledged review request and closed ticket")
+    req.status = "acknowledged"
+    req.acknowledged_by = user.id
+    req.acknowledged_at = datetime.utcnow()
+    notifications = db.execute(
+        select(Notification).where(
+            Notification.type == "ticket_approval_request",
+            Notification.link_url == str(ticket.id),
+            Notification.is_read.is_(False),
+        )
+    ).scalars().all()
+    for item in notifications:
+        item.is_read = True
+    db.commit()
+    db.refresh(ticket)
+    return _ticket_to_response(db, ticket)
+
+
+@router.get("/notifications/approval", response_model=list[TicketApprovalNotificationResponse])
+def list_approval_notifications(db: Session = Depends(get_db), user=Depends(get_current_member)):
+    rows = db.execute(
+        select(Notification)
+        .where(
+            Notification.user_id == user.id,
+            Notification.type == "ticket_approval_request",
+        )
+        .order_by(Notification.created_at.desc())
+    ).scalars().all()
+    out: list[TicketApprovalNotificationResponse] = []
+    for n in rows:
+        if not n.link_url:
+            continue
+        try:
+            ticket_id = UUID(n.link_url)
+        except Exception:
+            continue
+        ticket = db.get(Ticket, ticket_id)
+        if not ticket:
+            continue
+        try:
+            _ensure_ticket_access(db, user, ticket)
+        except HTTPException:
+            continue
+        req = db.execute(
+            select(TicketApprovalRequest)
+            .where(TicketApprovalRequest.ticket_id == ticket.id)
+            .order_by(TicketApprovalRequest.requested_at.desc())
+        ).scalars().first()
+        out.append(_approval_notification_response(n, ticket, req, db))
+    return out
+
+
+@router.patch("/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
+    row = db.get(Notification, notification_id)
+    if not row or row.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+    row.is_read = True
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/notifications/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_notification(notification_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
+    row = db.get(Notification, notification_id)
+    if not row or row.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+    db.delete(row)
+    db.commit()
+
+
 @router.get("", response_model=list[TicketResponse])
 def list_tickets(
     db: Session = Depends(get_db),
@@ -249,6 +448,7 @@ def list_comments(ticket_id: str, db: Session = Depends(get_db), user=Depends(ge
             ticket_id=c.ticket_id,
             author_id=c.author_id,
             author_name=_user_name(db, c.author_id),
+            author_avatar_url=_user_avatar_url(db, c.author_id),
             body=c.body,
             is_internal=c.is_internal,
             created_at=c.created_at,
@@ -285,6 +485,7 @@ def add_comment(
         ticket_id=row.ticket_id,
         author_id=row.author_id,
         author_name=_user_name(db, row.author_id),
+        author_avatar_url=_user_avatar_url(db, row.author_id),
         body=row.body,
         is_internal=row.is_internal,
         created_at=row.created_at,
@@ -306,6 +507,7 @@ def list_history(ticket_id: str, db: Session = Depends(get_db), user=Depends(get
             id=h.id,
             changed_by=h.changed_by,
             changer_name=_user_name(db, h.changed_by),
+            changer_avatar_url=_user_avatar_url(db, h.changed_by),
             field_name=h.field_name,
             old_value=h.old_value,
             new_value=h.new_value,
@@ -374,6 +576,7 @@ def list_attachments(ticket_id: str, db: Session = Depends(get_db), user=Depends
             mime_type=a.mime_type,
             uploaded_by=a.uploaded_by,
             uploader_name=_user_name(db, a.uploaded_by),
+            uploader_avatar_url=_user_avatar_url(db, a.uploaded_by),
             created_at=a.created_at,
         )
         for a in rows
@@ -430,6 +633,7 @@ async def upload_attachment(
         mime_type=row.mime_type,
         uploaded_by=row.uploaded_by,
         uploader_name=_user_name(db, row.uploaded_by),
+        uploader_avatar_url=_user_avatar_url(db, row.uploaded_by),
         created_at=row.created_at,
     )
 
