@@ -96,6 +96,19 @@ function humanizeToken(s: string): string {
   return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function memberInitials(name: string): string {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2) || '?'
+  );
+}
+
 function sprintStatusTagSeverity(
   status: string,
 ): 'success' | 'info' | 'warning' | 'secondary' | 'danger' | undefined {
@@ -606,13 +619,13 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
                   {(analytics.active_members ?? []).map((m) => (
                     <li key={m.id}>
                       <span className="sprints-monitoring-member-chip" title={m.name}>
-                        <span className="sprints-monitoring-member-initials" aria-hidden>
-                          {m.name
-                            .split(/\s+/)
-                            .map((x) => x[0]?.toUpperCase() ?? '')
-                            .join('')
-                            .slice(0, 2)}
-                        </span>
+                        {m.avatar_url ? (
+                          <img src={m.avatar_url} alt="" className="sprints-monitoring-member-avatar" loading="lazy" />
+                        ) : (
+                          <span className="sprints-monitoring-member-initials" aria-hidden>
+                            {memberInitials(m.name)}
+                          </span>
+                        )}
                         <span className="sprints-monitoring-member-name">{m.name}</span>
                       </span>
                     </li>
@@ -1976,16 +1989,13 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
                         {(analytics.active_members ?? []).map((m) => (
                           <li key={m.id}>
                             <span className="sprints-monitoring-member-chip" title={m.name}>
-                              <span className="sprints-monitoring-member-initials" aria-hidden>
-                                {m.name
-                                  .split(/\s+/)
-                                  .filter(Boolean)
-                                  .slice(0, 2)
-                                  .map((p) => p[0])
-                                  .join('')
-                                  .toUpperCase()
-                                  .slice(0, 2) || '?'}
-                              </span>
+                              {m.avatar_url ? (
+                                <img src={m.avatar_url} alt="" className="sprints-monitoring-member-avatar" loading="lazy" />
+                              ) : (
+                                <span className="sprints-monitoring-member-initials" aria-hidden>
+                                  {memberInitials(m.name)}
+                                </span>
+                              )}
                               <span className="sprints-monitoring-member-name">{m.name}</span>
                             </span>
                           </li>

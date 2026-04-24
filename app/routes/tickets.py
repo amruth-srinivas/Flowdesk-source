@@ -1,3 +1,4 @@
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -5,18 +6,21 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.constants.enums import TicketStatus, TicketType, UserRole
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.security import verify_password
 from app.dependencies.auth import get_current_member
 from app.models import (
     Approval,
     Notification,
     Project,
     Resolution,
+    Sprint,
+    Task,
     Ticket,
     TicketApprovalRequest,
     TicketAttachment,
@@ -36,6 +40,7 @@ from app.schemas.tickets import (
     TicketCommentCreate,
     TicketCommentResponse,
     TicketCreate,
+    TicketDeleteConfirm,
     TicketHistoryResponse,
     TicketResponse,
     TicketStatusUpdate,
@@ -61,6 +66,26 @@ def _ensure_project_access(db: Session, user: User, project_id: UUID) -> None:
     allowed = accessible_project_ids(db, user)
     if project_id not in allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this project")
+
+
+def _resolve_sprint_id_for_project(db: Session, project_id: UUID, sprint_id: UUID | None) -> UUID | None:
+    if sprint_id is None:
+        return None
+    sp = db.get(Sprint, sprint_id)
+    if not sp:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sprint not found")
+    if sp.project_ids and project_id not in sp.project_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ticket's project must be included in the sprint",
+        )
+    return sprint_id
+
+
+def _validate_and_set_ticket_sprint(db: Session, ticket: Ticket, sprint_id: UUID | None) -> None:
+    ticket.sprint_id = _resolve_sprint_id_for_project(db, ticket.project_id, sprint_id)
+    if ticket.sprint_id is not None:
+        ticket.is_overdue = False
 
 
 def _next_public_reference(db: Session, project_id: UUID, ticket_type: TicketType) -> str:
@@ -157,6 +182,7 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db), user=Dep
     if user.role not in {UserRole.ADMIN, UserRole.LEAD}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin/Lead can create tickets")
     _ensure_project_access(db, user, payload.project_id)
+    resolved_sprint_id = _resolve_sprint_id_for_project(db, payload.project_id, payload.sprint_id)
     next_ticket_num = (db.execute(select(func.max(Ticket.ticket_number))).scalar() or 0) + 1
     public_ref = _next_public_reference(db, payload.project_id, payload.type)
     ticket = Ticket(
@@ -168,9 +194,11 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db), user=Dep
         assignee_ids=dedupe_assignee_ids(payload.assigned_to or []),
         customer_id=payload.customer_id,
         due_date=payload.due_date,
+        is_overdue=False,
         created_by=user.id,
         ticket_number=next_ticket_num,
         public_reference=public_ref,
+        sprint_id=resolved_sprint_id,
     )
     db.add(ticket)
     db.commit()
@@ -191,13 +219,22 @@ def update_ticket(
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
-    if ticket.status != TicketStatus.OPEN:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Ticket fields are locked after it moves from Open. Only status can be updated.",
-        )
 
     data = payload.model_dump(exclude_unset=True)
+
+    if ticket.status != TicketStatus.OPEN:
+        if not data:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update")
+        if set(data.keys()) != {"sprint_id"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ticket fields are locked after it moves from Open. Only sprint assignment or status can be changed.",
+            )
+        _validate_and_set_ticket_sprint(db, ticket, payload.sprint_id)
+        db.commit()
+        db.refresh(ticket)
+        return _ticket_to_response(db, ticket)
+
     if "project_id" in data and payload.project_id is not None:
         _ensure_project_access(db, user, payload.project_id)
         ticket.project_id = payload.project_id
@@ -216,17 +253,7 @@ def update_ticket(
     if "due_date" in data:
         ticket.due_date = payload.due_date
     if "sprint_id" in data:
-        sid = payload.sprint_id
-        if sid is not None:
-            sp = db.get(Sprint, sid)
-            if not sp:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sprint not found")
-            if sp.project_ids and ticket.project_id not in sp.project_ids:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Ticket's project must be included in the sprint",
-                )
-        ticket.sprint_id = sid
+        _validate_and_set_ticket_sprint(db, ticket, payload.sprint_id)
 
     db.commit()
     db.refresh(ticket)
@@ -253,6 +280,55 @@ def update_status(ticket_id: str, payload: TicketStatusUpdate, db: Session = Dep
     _ensure_ticket_access(db, user, ticket)
     updated = update_ticket_status(db, ticket, payload.status, user, payload.comment)
     return _ticket_to_response(db, updated)
+
+
+def _delete_ticket_and_dependencies(db: Session, ticket: Ticket) -> None:
+    tid = ticket.id
+    db.execute(delete(TicketAttachment).where(TicketAttachment.ticket_id == tid))
+    db.execute(delete(TicketComment).where(TicketComment.ticket_id == tid))
+    db.execute(delete(TicketHistory).where(TicketHistory.ticket_id == tid))
+    db.execute(delete(TicketApprovalRequest).where(TicketApprovalRequest.ticket_id == tid))
+    resolution = db.execute(select(Resolution).where(Resolution.ticket_id == tid)).scalar_one_or_none()
+    if resolution:
+        db.execute(delete(Approval).where(Approval.resolution_id == resolution.id))
+        db.delete(resolution)
+    for task in db.execute(select(Task).where(Task.ticket_id == tid)).scalars().all():
+        task.ticket_id = None
+    root = Path(settings.ticket_upload_dir).resolve()
+    ticket_dir = root / str(tid)
+    if ticket_dir.is_dir():
+        try:
+            resolved_dir = ticket_dir.resolve()
+            if str(resolved_dir).startswith(str(root)):
+                shutil.rmtree(resolved_dir, ignore_errors=True)
+        except OSError:
+            pass
+    db.delete(ticket)
+
+
+@router.post("/{ticket_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
+def delete_ticket(
+    ticket_id: str,
+    payload: TicketDeleteConfirm,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_member),
+):
+    if user.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin/Lead can delete tickets")
+    if not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect password")
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    _ensure_ticket_access(db, user, ticket)
+    if ticket.status not in {TicketStatus.OPEN, TicketStatus.IN_PROGRESS}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only tickets in Open or In progress can be deleted",
+        )
+    _delete_ticket_and_dependencies(db, ticket)
+    db.commit()
+    return None
 
 
 @router.post("/{ticket_id}/approval-request", response_model=TicketApprovalRequestResponse, status_code=status.HTTP_201_CREATED)

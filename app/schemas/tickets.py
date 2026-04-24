@@ -15,6 +15,7 @@ class TicketCreate(BaseModel):
     assigned_to: list[UUID] = Field(default_factory=list)
     customer_id: UUID | None = None
     due_date: date | None = None
+    sprint_id: UUID | None = None
 
 
 class TicketUpdate(BaseModel):
@@ -38,6 +39,10 @@ class TicketStatusUpdate(BaseModel):
     comment: str | None = Field(None, max_length=2000)
 
 
+class TicketDeleteConfirm(BaseModel):
+    password: str = Field(..., min_length=1, max_length=500)
+
+
 class TicketResponse(BaseModel):
     id: UUID
     ticket_number: int
@@ -55,6 +60,7 @@ class TicketResponse(BaseModel):
     assignee_names: list[str] = Field(default_factory=list)
     customer_id: UUID | None
     due_date: date | None = None
+    is_overdue: bool = False
     closed_at: datetime | None = None
     resolved_by: UUID | None = None
     resolved_by_name: str | None = None

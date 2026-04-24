@@ -16,6 +16,7 @@ import {
   createUserRequest,
   deleteTicketConfigurationRequest,
   createTicketRequest,
+  deleteTicketRequest,
   getAssignableUsersRequest,
   getCustomersRequest,
   getEventsRequest,
@@ -705,6 +706,10 @@ function App() {
     return patchTicketStatusRequest(id, status, comment);
   }, []);
 
+  const handleLeadDeleteTicket = useCallback(async (id: string, password: string) => {
+    await deleteTicketRequest(id, password);
+  }, []);
+
   const handleUpdateCurrentUserProfile = useCallback(
     async (payload: { name: string; email: string; avatar_url?: string | null }) => {
       const updated = await updateCurrentUserRequest(payload);
@@ -1353,6 +1358,8 @@ function App() {
         ticketRole={isLead ? 'lead' : 'member'}
         canCreateTickets={isLeadCreateModule}
         canEditTickets={isLead || role === 'teamMember'}
+        canDeleteTickets={isLead}
+        onDeleteTicket={handleLeadDeleteTicket}
       />
     );
   }

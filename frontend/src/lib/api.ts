@@ -809,6 +809,7 @@ export type TicketRecord = {
   assignee_names?: string[];
   customer_id: string | null;
   due_date: string | null;
+  is_overdue: boolean;
   closed_at: string | null;
   resolved_by: string | null;
   resolved_by_name?: string | null;
@@ -828,6 +829,7 @@ export type TicketCreatePayload = {
   assigned_to?: string[];
   customer_id?: string | null;
   due_date?: string | null;
+  sprint_id?: string | null;
 };
 
 export type TicketUpdatePayload = {
@@ -1071,6 +1073,22 @@ export async function patchTicketStatusRequest(
   return parseResponse<TicketRecord>(response);
 }
 
+export async function deleteTicketRequest(ticketId: string, password: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/delete`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ password }),
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    const detail = errorBody?.detail;
+    if (typeof detail === 'string') {
+      throw new Error(detail);
+    }
+    throw new Error('Request failed');
+  }
+}
+
 export type TicketApprovalRequestRecord = {
   id: string;
   ticket_id: string;
@@ -1186,6 +1204,7 @@ export type SprintTicketBrief = {
 export type SprintActiveMember = {
   id: string;
   name: string;
+  avatar_url?: string | null;
 };
 
 export type SprintAnalyticsRecord = {

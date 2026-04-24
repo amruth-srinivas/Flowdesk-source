@@ -478,3 +478,33 @@ def apply_user_theme_preference_migration(engine: Engine) -> None:
                 conn.execute(text("UPDATE users SET theme_preference = 'light' WHERE theme_preference IS NULL"))
     except Exception as exc:
         logger.warning("Theme preference migration failed: %s", exc)
+
+
+def apply_ticket_overdue_migration(engine: Engine) -> None:
+    """Add tickets.is_overdue flag for automatic sprint rollover handling."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for ticket overdue migration: %s", exc)
+        return
+
+    if "tickets" not in tables:
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("tickets")}
+    if "is_overdue" in columns:
+        return
+
+    logger.info("Adding tickets.is_overdue column")
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "postgresql":
+                conn.execute(
+                    text("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS is_overdue BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+            else:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN is_overdue BOOLEAN DEFAULT 0"))
+                conn.execute(text("UPDATE tickets SET is_overdue = 0 WHERE is_overdue IS NULL"))
+    except Exception as exc:
+        logger.warning("Ticket overdue migration failed: %s", exc)

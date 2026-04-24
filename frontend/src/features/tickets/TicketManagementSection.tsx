@@ -220,6 +220,10 @@ function filterByModule(
   }
 }
 
+function ticketCanBeDeleted(row: TicketRecord): boolean {
+  return row.status === 'open' || row.status === 'in_progress';
+}
+
 function applySearch(
   tickets: TicketRecord[],
   q: string,
@@ -264,10 +268,13 @@ type TicketManagementSectionProps = {
   onCreateTicket: (payload: TicketCreatePayload) => Promise<TicketRecord>;
   onUpdateTicket: (id: string, payload: TicketUpdatePayload) => Promise<TicketRecord>;
   onPatchStatus: (id: string, status: TicketStatus, comment?: string | null) => Promise<TicketRecord>;
+  onDeleteTicket: (id: string, password: string) => Promise<void>;
   /** Lead: full ticket CRUD. Member: assigned tickets, conversation & resolution. */
   ticketRole: 'lead' | 'member';
   canCreateTickets: boolean;
   canEditTickets: boolean;
+  /** Only leads (and backend Admin) may delete; still limited to Open / In progress tickets. */
+  canDeleteTickets: boolean;
 };
 
 export function TicketManagementSection({
@@ -288,9 +295,11 @@ export function TicketManagementSection({
   onCreateTicket,
   onUpdateTicket,
   onPatchStatus,
+  onDeleteTicket,
   ticketRole,
   canCreateTickets,
   canEditTickets,
+  canDeleteTickets,
 }: TicketManagementSectionProps) {
   type Panel = 'none' | 'create' | 'edit';
   type StatusChangeSource = 'list' | 'kanban';
@@ -307,6 +316,10 @@ export function TicketManagementSection({
   const [statusCommentOpen, setStatusCommentOpen] = useState(false);
   const [statusCommentText, setStatusCommentText] = useState('');
   const [statusCommentSaving, setStatusCommentSaving] = useState(false);
+  const [deleteConfirmTicket, setDeleteConfirmTicket] = useState<TicketRecord | null>(null);
+  const [deleteConfirmPassword, setDeleteConfirmPassword] = useState('');
+  const [deleteShowPassword, setDeleteShowPassword] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<{
     ticketId: string;
     nextStatus: TicketStatus;
@@ -322,6 +335,7 @@ export function TicketManagementSection({
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<Date | null>(null);
+  const [createSprintId, setCreateSprintId] = useState<string | null>(null);
   const [sprints, setSprints] = useState<SprintRecord[]>([]);
   const [approvalRequests, setApprovalRequests] = useState<TicketApprovalRequestRecord[]>([]);
 
@@ -417,6 +431,23 @@ export function TicketManagementSection({
     [customers],
   );
 
+  const sprintOptionsForCreate = useMemo(() => {
+    const none = { label: 'None (backlog)', value: null as string | null };
+    if (!projectId) {
+      return [none];
+    }
+    const rows = sprints.filter((s) => (s.project_ids ?? []).includes(projectId));
+    const opts = rows.map((s) => {
+      const statusNote =
+        s.status === 'active' ? ' — active' : s.status === 'planning' ? ' — planning' : s.status ? ` — ${s.status}` : '';
+      return {
+        label: `${s.title} (${s.start_date} → ${s.end_date})${statusNote}`,
+        value: s.id,
+      };
+    });
+    return [none, ...opts];
+  }, [projectId, sprints]);
+
   const hydrateFromTicket = useCallback((row: TicketRecord) => {
     setProjectId(row.project_id);
     setTitle(row.title);
@@ -488,6 +519,7 @@ export function TicketManagementSection({
       setAssigneeIds([]);
       setCustomerId(null);
       setDueDate(null);
+      setCreateSprintId(null);
       setFormError('');
     }
   }, [panel, projects]);
@@ -524,6 +556,60 @@ export function TicketManagementSection({
     setPendingStatusChange(null);
   }
 
+  function closeDeleteConfirmModal() {
+    if (deleteBusy) {
+      return;
+    }
+    setDeleteConfirmTicket(null);
+    setDeleteConfirmPassword('');
+    setDeleteShowPassword(false);
+  }
+
+  async function confirmDeleteTicket() {
+    if (!deleteConfirmTicket) {
+      return;
+    }
+    const pwd = deleteConfirmPassword.trim();
+    if (!pwd) {
+      statusToastRef.current?.show({
+        severity: 'warn',
+        summary: 'Password required',
+        detail: 'Enter your account password to confirm deletion.',
+        life: 5000,
+      });
+      return;
+    }
+    const row = deleteConfirmTicket;
+    const id = row.id;
+    setDeleteBusy(true);
+    try {
+      await onDeleteTicket(id, pwd);
+      statusToastRef.current?.show({
+        severity: 'success',
+        summary: 'Ticket deleted',
+        detail: `${displayTicketRef(row)} was removed.`,
+        life: 4500,
+      });
+      setDeleteConfirmTicket(null);
+      setDeleteConfirmPassword('');
+      setDeleteShowPassword(false);
+      if (editingId === id) {
+        closePanel();
+      }
+      onRefresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not delete ticket';
+      statusToastRef.current?.show({
+        severity: 'error',
+        summary: 'Delete failed',
+        detail: msg,
+        life: 6000,
+      });
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   async function submitCreate() {
     if (!projectId) {
       setFormError('Select a project.');
@@ -545,6 +631,7 @@ export function TicketManagementSection({
         assigned_to: assigneeIds,
         customer_id: customerId,
         due_date: dueDate ? toYmd(dueDate) : null,
+        sprint_id: createSprintId,
       });
       onRefresh();
       setEditingId(created.id);
@@ -698,12 +785,47 @@ export function TicketManagementSection({
               inputId={`tf-project-${viewKey}`}
               value={projectId}
               options={projectOptions}
-              onChange={(e) => setProjectId(e.value as string)}
+              onChange={(e) => {
+                const next = e.value as string;
+                setProjectId(next);
+                setCreateSprintId((prev) => {
+                  if (!prev) {
+                    return null;
+                  }
+                  const sp = sprints.find((s) => s.id === prev);
+                  if (sp && (sp.project_ids ?? []).includes(next)) {
+                    return prev;
+                  }
+                  return null;
+                });
+              }}
               placeholder="Select project"
               className="full-width"
               filter
             />
           </div>
+        </div>
+
+        <div className="ticket-form-field ticket-form-field--full">
+          <label className="ticket-form-label" htmlFor={`tf-sprint-create-${viewKey}`}>
+            Sprint
+          </label>
+          <div className="p-inputgroup">
+            <span className="p-inputgroup-addon">
+              <i className="pi pi-calendar" />
+            </span>
+            <Dropdown
+              inputId={`tf-sprint-create-${viewKey}`}
+              value={createSprintId}
+              options={sprintOptionsForCreate}
+              onChange={(e) => setCreateSprintId((e.value as string | null) ?? null)}
+              placeholder={projectId ? 'Backlog or a sprint' : 'Select a project first'}
+              className="full-width"
+              filter
+              disabled={!projectId}
+            />
+          </div>
+          <small className="ticket-form-hint">Optional — only sprints that include this project are listed.</small>
         </div>
 
         <div className="ticket-form-field ticket-form-field--full">
@@ -944,12 +1066,17 @@ export function TicketManagementSection({
                   bodyClassName="tickets-col-ref"
                   style={{ minWidth: '124px', width: '128px' }}
                   body={(row: TicketRecord) => (
-                    <span
-                      className={`tickets-ref-chip tickets-ref-type-${row.type}`}
-                      title={displayTicketRef(row)}
-                    >
-                      {displayTicketRef(row)}
-                    </span>
+                    <div className="tickets-ref-cell-wrap">
+                      <span
+                        className={`tickets-ref-chip tickets-ref-type-${row.type}`}
+                        title={displayTicketRef(row)}
+                      >
+                        {displayTicketRef(row)}
+                      </span>
+                      {row.is_overdue ? (
+                        <Tag value="Overdue" severity="danger" className="tickets-overdue-chip" />
+                      ) : null}
+                    </div>
                   )}
                 />
               )}
@@ -1108,9 +1235,21 @@ export function TicketManagementSection({
                     <button
                       type="button"
                       className="tickets-action-icon tickets-action-icon--delete"
-                      disabled
-                      title="Delete is not available yet"
-                      aria-label="Delete ticket (unavailable)"
+                      disabled={!canDeleteTickets || !ticketCanBeDeleted(row) || deleteBusy}
+                      title={
+                        !canDeleteTickets
+                          ? 'Only team leads can delete tickets'
+                          : !ticketCanBeDeleted(row)
+                            ? 'Only Open or In progress tickets can be deleted'
+                            : 'Delete ticket'
+                      }
+                      aria-label="Delete ticket"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (canDeleteTickets && ticketCanBeDeleted(row) && !deleteBusy) {
+                          setDeleteConfirmTicket(row);
+                        }
+                      }}
                     >
                       <i className="pi pi-trash" aria-hidden />
                     </button>
@@ -1182,6 +1321,7 @@ export function TicketManagementSection({
                         >
                           <div className="kanban-card-top">
                             <strong className="tickets-ref-cell">{displayTicketRef(row)}</strong>
+                            {row.is_overdue ? <Tag value="Overdue" severity="danger" className="tickets-overdue-chip" /> : null}
                             <Tag
                               value={humanize(row.priority)}
                               severity={prioritySeverity(row.priority)}
@@ -1249,7 +1389,22 @@ export function TicketManagementSection({
                     </div>
                   ) : null}
                 </div>
-                <Button type="button" icon="pi pi-times" rounded text severity="secondary" onClick={closePanel} aria-label="Close panel" />
+                <div className="tickets-detail-header-actions">
+                  {panel === 'edit' && editingTicket && canDeleteTickets && ticketCanBeDeleted(editingTicket) ? (
+                    <Button
+                      type="button"
+                      icon="pi pi-trash"
+                      rounded
+                      text
+                      severity="danger"
+                      aria-label="Delete ticket"
+                      title="Delete ticket"
+                      disabled={deleteBusy}
+                      onClick={() => setDeleteConfirmTicket(editingTicket)}
+                    />
+                  ) : null}
+                  <Button type="button" icon="pi pi-times" rounded text severity="secondary" onClick={closePanel} aria-label="Close panel" />
+                </div>
               </header>
               {panel === 'create' ? (
                 <div className="tickets-detail-scroll">{createFormBody}</div>
@@ -1453,23 +1608,28 @@ export function TicketManagementSection({
                           <dl className="ticket-readonly-dl">
                             <dt>Status</dt>
                             <dd>
-                              {!canEditTickets || editingTicket.status === 'closed' ? (
-                                <Tag
-                                  value={humanize(editingTicket.status)}
-                                  severity={statusSeverity(editingTicket.status)}
-                                  rounded
-                                  className={`ticket-palette-status ticket-palette-status--${ticketPaletteKey(editingTicket.status)}`}
-                                />
-                              ) : (
-                                <Dropdown
-                                  value={editingTicket.status}
-                                  options={statusDropdownOptions}
-                                  onChange={(ev) => void handleInlineStatusChange(editingTicket, ev.value as TicketStatus)}
-                                  disabled={statusBusy === editingTicket.id}
-                                  className={`full-width tickets-status-dropdown tickets-status-dropdown--${ticketPaletteKey(editingTicket.status)}`}
-                                  panelClassName="tickets-status-dropdown-panel"
-                                />
-                              )}
+                              <div className="ticket-status-readout">
+                                {!canEditTickets || editingTicket.status === 'closed' ? (
+                                  <Tag
+                                    value={humanize(editingTicket.status)}
+                                    severity={statusSeverity(editingTicket.status)}
+                                    rounded
+                                    className={`ticket-palette-status ticket-palette-status--${ticketPaletteKey(editingTicket.status)}`}
+                                  />
+                                ) : (
+                                  <Dropdown
+                                    value={editingTicket.status}
+                                    options={statusDropdownOptions}
+                                    onChange={(ev) => void handleInlineStatusChange(editingTicket, ev.value as TicketStatus)}
+                                    disabled={statusBusy === editingTicket.id}
+                                    className={`full-width tickets-status-dropdown tickets-status-dropdown--${ticketPaletteKey(editingTicket.status)}`}
+                                    panelClassName="tickets-status-dropdown-panel"
+                                  />
+                                )}
+                                {editingTicket.is_overdue ? (
+                                  <Tag value="Overdue" severity="danger" className="tickets-overdue-chip" />
+                                ) : null}
+                              </div>
                             </dd>
                             <dt>Assignees</dt>
                             <dd>{formatAssigneeLabels(editingTicket, userLookup) || '—'}</dd>
@@ -1562,6 +1722,72 @@ export function TicketManagementSection({
             />
           </div>
         </div>
+      </Dialog>
+      <Dialog
+        header="Delete ticket"
+        visible={Boolean(deleteConfirmTicket)}
+        onHide={closeDeleteConfirmModal}
+        className="ticket-delete-confirm-dialog"
+        modal
+        draggable={false}
+        resizable={false}
+        dismissableMask={!deleteBusy}
+        closable={!deleteBusy}
+      >
+        {deleteConfirmTicket ? (
+          <div className="ticket-delete-confirm-body">
+            <p>
+              Permanently delete <strong>{displayTicketRef(deleteConfirmTicket)}</strong>
+              {deleteConfirmTicket.title ? (
+                <>
+                  {' '}
+                  — <span className="ticket-delete-confirm-title">{deleteConfirmTicket.title}</span>
+                </>
+              ) : null}
+              ? This cannot be undone.
+            </p>
+            <div className="ticket-delete-password-field">
+              <div className="p-inputgroup">
+                <span className="p-inputgroup-addon">
+                  <i className="pi pi-key" aria-hidden />
+                </span>
+                <FloatLabel className="user-float-field" style={{ flex: 1 }}>
+                  <InputText
+                    id={`ticket-delete-password-${viewKey}`}
+                    type={deleteShowPassword ? 'text' : 'password'}
+                    className="full-width"
+                    value={deleteConfirmPassword}
+                    onChange={(e) => setDeleteConfirmPassword(e.target.value)}
+                    autoComplete="current-password"
+                    disabled={deleteBusy}
+                  />
+                  <label htmlFor={`ticket-delete-password-${viewKey}`}>Your password</label>
+                </FloatLabel>
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setDeleteShowPassword((c) => !c)}
+                  disabled={deleteBusy}
+                  aria-label={deleteShowPassword ? 'Hide password' : 'Show password'}
+                >
+                  <i className={deleteShowPassword ? 'pi pi-eye-slash' : 'pi pi-eye'} />
+                </button>
+              </div>
+              <p className="ticket-delete-password-help">Enter the password you use to sign in.</p>
+            </div>
+            <div className="ticket-status-comment-actions">
+              <Button type="button" label="Cancel" text onClick={closeDeleteConfirmModal} disabled={deleteBusy} />
+              <Button
+                type="button"
+                label={deleteBusy ? 'Deleting…' : 'Delete'}
+                icon="pi pi-trash"
+                severity="danger"
+                onClick={() => void confirmDeleteTicket()}
+                disabled={deleteBusy || !deleteConfirmPassword.trim()}
+              />
+            </div>
+          </div>
+        ) : null}
       </Dialog>
     </motion.article>
   );
