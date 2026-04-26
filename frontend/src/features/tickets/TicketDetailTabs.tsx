@@ -1,6 +1,7 @@
 import { Button } from 'primereact/button';
 import { Checkbox } from 'primereact/checkbox';
 import { Dialog } from 'primereact/dialog';
+import { Dropdown } from 'primereact/dropdown';
 import { Editor } from 'primereact/editor';
 import { TabPanel, TabView } from 'primereact/tabview';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -10,6 +11,7 @@ import {
   downloadTicketAttachmentFile,
   getTicketAttachmentsRequest,
   getTicketCommentsRequest,
+  getTicketCyclesRequest,
   getTicketHistoryRequest,
   getTicketResolutionRequest,
   postTicketCommentRequest,
@@ -17,6 +19,7 @@ import {
   uploadTicketAttachmentRequest,
   type ResolutionRecord,
   type ResolutionUpsertPayload,
+  type TicketCycleRecord,
   type TicketCommentRecord,
   type TicketHistoryRecord,
   type TicketRecord,
@@ -75,6 +78,12 @@ function initials(name: string): string {
     return parts[0].slice(0, 2).toUpperCase();
   }
   return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
+function cycleStatusLabel(status: string): string {
+  const normalized = status.toLowerCase().trim();
+  if (normalized === 'open') return 'Reopened';
+  return humanize(normalized);
 }
 
 const resolutionEditorHeaderTemplate = (
@@ -159,6 +168,8 @@ export function TicketDetailTabs({
   const ticketClosed = ticket.status === 'closed';
 
   const [tabIndex, setTabIndex] = useState(0);
+  const [cycles, setCycles] = useState<TicketCycleRecord[]>([]);
+  const [selectedCycleId, setSelectedCycleId] = useState<string | null>(ticket.current_cycle_id ?? null);
   const [comments, setComments] = useState<TicketCommentRecord[]>([]);
   const [history, setHistory] = useState<TicketHistoryRecord[]>([]);
   const [attachments, setAttachments] = useState<Awaited<ReturnType<typeof getTicketAttachmentsRequest>>>([]);
@@ -181,16 +192,39 @@ export function TicketDetailTabs({
   const [attachmentPreviewUrls, setAttachmentPreviewUrls] = useState<Record<string, string>>({});
   const [mediaPreview, setMediaPreview] = useState<{ kind: 'image' | 'video'; url: string; name: string; attachmentId: string } | null>(null);
 
+  const selectedCycle = useMemo(
+    () => cycles.find((cycle) => cycle.id === selectedCycleId) ?? null,
+    [cycles, selectedCycleId],
+  );
+
+  const cycleOptions = useMemo(
+    () =>
+      cycles.map((cycle) => ({
+        label: `V${cycle.version_no} • ${cycleStatusLabel(cycle.status)}`,
+        value: cycle.id,
+        version: cycle.version_no,
+        statusLabel: cycleStatusLabel(cycle.status),
+        statusKey: String(cycle.status ?? '').toLowerCase().replace(/\s+/g, '_'),
+      })),
+    [cycles],
+  );
+
   const reloadThread = useCallback(async () => {
     setError('');
     setLoading(true);
     try {
-      const [c, h, a, r] = await Promise.all([
-        getTicketCommentsRequest(ticket.id),
+      const [cycleRows, c, h, a, r] = await Promise.all([
+        getTicketCyclesRequest(ticket.id),
+        getTicketCommentsRequest(ticket.id, selectedCycleId ?? undefined),
         getTicketHistoryRequest(ticket.id),
-        getTicketAttachmentsRequest(ticket.id),
-        getTicketResolutionRequest(ticket.id),
+        getTicketAttachmentsRequest(ticket.id, selectedCycleId ?? undefined),
+        getTicketResolutionRequest(ticket.id, selectedCycleId ?? undefined),
       ]);
+      setCycles(cycleRows);
+      if (!selectedCycleId && cycleRows.length) {
+        const defaultCycle = ticket.current_cycle_id ?? cycleRows[0].id;
+        setSelectedCycleId(defaultCycle);
+      }
       setComments(c);
       setHistory(h);
       setAttachments(a);
@@ -211,15 +245,23 @@ export function TicketDetailTabs({
     } finally {
       setLoading(false);
     }
-  }, [ticket.id]);
+  }, [ticket.id, ticket.current_cycle_id, selectedCycleId]);
 
   useEffect(() => {
     setTabIndex(0);
     setNewComment('');
     setInternalNote(false);
     setResolutionLoaded(false);
+    setSelectedCycleId(ticket.current_cycle_id ?? null);
     void reloadThread();
-  }, [ticket.id, reloadThread]);
+  }, [ticket.id, ticket.current_cycle_id, reloadThread]);
+
+  useEffect(() => {
+    if (!selectedCycleId) {
+      return;
+    }
+    void reloadThread();
+  }, [selectedCycleId, reloadThread]);
 
   useEffect(() => {
     return () => {
@@ -279,9 +321,9 @@ export function TicketDetailTabs({
       const created = await postTicketCommentRequest(ticket.id, {
         body: plain ? body : 'Shared attachment',
         is_internal: canPostInternalNotes && internalNote,
-      });
+      }, { cycle_id: selectedCycleId ?? undefined });
       for (const file of pendingFiles) {
-        await uploadTicketAttachmentRequest(ticket.id, file, created.id);
+        await uploadTicketAttachmentRequest(ticket.id, file, created.id, { cycle_id: selectedCycleId ?? undefined });
       }
       setNewComment('');
       setInternalNote(false);
@@ -313,7 +355,7 @@ export function TicketDetailTabs({
         steps_taken: resolutionSteps.trim() || null,
         kb_article_id: null,
       };
-      await putTicketResolutionRequest(ticket.id, payload);
+      await putTicketResolutionRequest(ticket.id, payload, { cycle_id: selectedCycleId ?? undefined });
       await reloadThread();
       onThreadChanged();
     } catch (e) {
@@ -330,7 +372,7 @@ export function TicketDetailTabs({
     setUploadBusy(true);
     setError('');
     try {
-      await uploadTicketAttachmentRequest(ticket.id, file);
+      await uploadTicketAttachmentRequest(ticket.id, file, undefined, { cycle_id: selectedCycleId ?? undefined });
       await reloadThread();
       onThreadChanged();
     } catch (e) {
@@ -466,6 +508,43 @@ export function TicketDetailTabs({
   return (
     <div className="ticket-detail-tabs">
       {error ? <p className="error-text ticket-detail-tabs-error">{error}</p> : null}
+      <div className="ticket-cycle-toolbar">
+        <span className="ticket-cycle-label">Ticket version</span>
+        <Dropdown
+          value={selectedCycleId}
+          options={cycleOptions}
+          optionLabel="label"
+          optionValue="value"
+          onChange={(e) => setSelectedCycleId((e.value as string) ?? null)}
+          className="ticket-cycle-dropdown"
+          disabled={!cycles.length}
+          valueTemplate={(option) => {
+            if (!option) return <span className="ticket-cycle-placeholder">Select version</span>;
+            return (
+              <span className="ticket-cycle-badge">
+                <span className="ticket-cycle-badge-version">V{option.version}</span>
+                <span className={`ticket-cycle-badge-status ticket-cycle-badge-status--${option.statusKey}`}>
+                  {option.statusLabel}
+                </span>
+              </span>
+            );
+          }}
+          itemTemplate={(option) => (
+            <span className="ticket-cycle-badge">
+              <span className="ticket-cycle-badge-version">V{option.version}</span>
+              <span className={`ticket-cycle-badge-status ticket-cycle-badge-status--${option.statusKey}`}>
+                {option.statusLabel}
+              </span>
+            </span>
+          )}
+        />
+      </div>
+      {selectedCycle?.reopen_reason ? (
+        <p className="ticket-cycle-note">
+          Reopened in V{selectedCycle.version_no}
+          {selectedCycle.reopened_by_name ? ` by ${selectedCycle.reopened_by_name}` : ''}: {selectedCycle.reopen_reason}
+        </p>
+      ) : null}
       {showApprovalAction ? (
         <div className="ticket-detail-approval-bar">
           <span className="ticket-detail-approval-hint">

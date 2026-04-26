@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,6 +30,9 @@ def rollover_expired_sprints(db: Session, today: date | None = None) -> int:
             )
         ).scalars().all()
         for ticket in open_tickets:
+            ticket.carried_from_sprint_id = sprint.id
+            ticket.carried_over_at = datetime.now(timezone.utc)
+            ticket.carryover_count = int(ticket.carryover_count or 0) + 1
             ticket.sprint_id = None
             ticket.is_overdue = True
             moved += 1

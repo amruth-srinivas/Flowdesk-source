@@ -1,6 +1,7 @@
 """Lightweight additive migrations for environments without Alembic."""
 
 import logging
+import uuid
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
@@ -508,3 +509,289 @@ def apply_ticket_overdue_migration(engine: Engine) -> None:
                 conn.execute(text("UPDATE tickets SET is_overdue = 0 WHERE is_overdue IS NULL"))
     except Exception as exc:
         logger.warning("Ticket overdue migration failed: %s", exc)
+
+
+def apply_ticket_carryover_migration(engine: Engine) -> None:
+    """Add carryover metadata columns for sprint rollover traceability."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for ticket carryover migration: %s", exc)
+        return
+
+    if "tickets" not in tables:
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("tickets")}
+    needs_from_sprint = "carried_from_sprint_id" not in columns
+    needs_over_at = "carried_over_at" not in columns
+    needs_count = "carryover_count" not in columns
+    if not (needs_from_sprint or needs_over_at or needs_count):
+        return
+
+    logger.info("Adding ticket carryover columns")
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "postgresql":
+                if needs_from_sprint:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS carried_from_sprint_id UUID REFERENCES sprints(id) ON DELETE SET NULL"
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "CREATE INDEX IF NOT EXISTS ix_tickets_carried_from_sprint_id ON tickets (carried_from_sprint_id)"
+                        )
+                    )
+                if needs_over_at:
+                    conn.execute(
+                        text("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS carried_over_at TIMESTAMP WITH TIME ZONE")
+                    )
+                if needs_count:
+                    conn.execute(
+                        text("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS carryover_count INTEGER NOT NULL DEFAULT 0")
+                    )
+                    conn.execute(
+                        text("UPDATE tickets SET carryover_count = 0 WHERE carryover_count IS NULL")
+                    )
+            else:
+                if needs_from_sprint:
+                    conn.execute(text("ALTER TABLE tickets ADD COLUMN carried_from_sprint_id UUID"))
+                if needs_over_at:
+                    conn.execute(text("ALTER TABLE tickets ADD COLUMN carried_over_at DATETIME"))
+                if needs_count:
+                    conn.execute(text("ALTER TABLE tickets ADD COLUMN carryover_count INTEGER DEFAULT 0"))
+                    conn.execute(text("UPDATE tickets SET carryover_count = 0 WHERE carryover_count IS NULL"))
+    except Exception as exc:
+        logger.warning("Ticket carryover migration failed: %s", exc)
+
+
+def apply_ticket_cycles_migration(engine: Engine) -> None:
+    """Add ticket cycle versioning tables/columns and backfill cycle v1 for existing tickets."""
+    try:
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+    except Exception as exc:
+        logger.warning("Could not inspect database for ticket cycle migration: %s", exc)
+        return
+
+    if "tickets" not in tables:
+        return
+
+    dialect = engine.dialect.name
+
+    try:
+        with engine.begin() as conn:
+            if "ticket_cycles" not in tables:
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            """
+                            CREATE TABLE IF NOT EXISTS ticket_cycles (
+                              id UUID PRIMARY KEY,
+                              ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                              version_no INTEGER NOT NULL,
+                              sprint_id UUID NULL REFERENCES sprints(id) ON DELETE SET NULL,
+                              status ticket_status NOT NULL DEFAULT 'open',
+                              reopen_reason TEXT NULL,
+                              reopened_by UUID NULL REFERENCES users(id),
+                              reopened_at TIMESTAMPTZ NULL,
+                              previous_cycle_id UUID NULL REFERENCES ticket_cycles(id) ON DELETE SET NULL,
+                              closed_at TIMESTAMPTZ NULL,
+                              closed_by UUID NULL REFERENCES users(id),
+                              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                            )
+                            """
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS ux_ticket_cycles_ticket_version ON ticket_cycles (ticket_id, version_no)"
+                        )
+                    )
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_cycles_ticket_id ON ticket_cycles (ticket_id)"))
+                else:
+                    conn.execute(
+                        text(
+                            """
+                            CREATE TABLE ticket_cycles (
+                              id VARCHAR(36) PRIMARY KEY,
+                              ticket_id VARCHAR(36) NOT NULL,
+                              version_no INTEGER NOT NULL,
+                              sprint_id VARCHAR(36) NULL,
+                              status VARCHAR(32) NOT NULL DEFAULT 'open',
+                              reopen_reason TEXT NULL,
+                              reopened_by VARCHAR(36) NULL,
+                              reopened_at DATETIME NULL,
+                              previous_cycle_id VARCHAR(36) NULL,
+                              closed_at DATETIME NULL,
+                              closed_by VARCHAR(36) NULL,
+                              created_at DATETIME NOT NULL,
+                              updated_at DATETIME NOT NULL
+                            )
+                            """
+                        )
+                    )
+                    conn.execute(text("CREATE UNIQUE INDEX ux_ticket_cycles_ticket_version ON ticket_cycles (ticket_id, version_no)"))
+                    conn.execute(text("CREATE INDEX ix_ticket_cycles_ticket_id ON ticket_cycles (ticket_id)"))
+
+            if "ticket_cycle_resolutions" not in tables:
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            """
+                            CREATE TABLE IF NOT EXISTS ticket_cycle_resolutions (
+                              id UUID PRIMARY KEY,
+                              ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                              ticket_cycle_id UUID NOT NULL REFERENCES ticket_cycles(id) ON DELETE CASCADE,
+                              resolved_by UUID NOT NULL REFERENCES users(id),
+                              summary TEXT NOT NULL,
+                              root_cause TEXT NULL,
+                              steps_taken TEXT NULL,
+                              kb_article_id UUID NULL REFERENCES kb_articles(id),
+                              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                            )
+                            """
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS ux_ticket_cycle_resolutions_cycle ON ticket_cycle_resolutions (ticket_cycle_id)"
+                        )
+                    )
+                else:
+                    conn.execute(
+                        text(
+                            """
+                            CREATE TABLE ticket_cycle_resolutions (
+                              id VARCHAR(36) PRIMARY KEY,
+                              ticket_id VARCHAR(36) NOT NULL,
+                              ticket_cycle_id VARCHAR(36) NOT NULL,
+                              resolved_by VARCHAR(36) NOT NULL,
+                              summary TEXT NOT NULL,
+                              root_cause TEXT NULL,
+                              steps_taken TEXT NULL,
+                              kb_article_id VARCHAR(36) NULL,
+                              created_at DATETIME NOT NULL,
+                              updated_at DATETIME NOT NULL
+                            )
+                            """
+                        )
+                    )
+                    conn.execute(text("CREATE UNIQUE INDEX ux_ticket_cycle_resolutions_cycle ON ticket_cycle_resolutions (ticket_cycle_id)"))
+
+            ticket_columns = {col["name"] for col in inspector.get_columns("tickets")}
+            if "current_cycle_id" not in ticket_columns:
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS current_cycle_id UUID REFERENCES ticket_cycles(id) ON DELETE SET NULL"
+                        )
+                    )
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tickets_current_cycle_id ON tickets (current_cycle_id)"))
+                else:
+                    conn.execute(text("ALTER TABLE tickets ADD COLUMN current_cycle_id VARCHAR(36)"))
+
+            comment_columns = {col["name"] for col in inspector.get_columns("ticket_comments")} if "ticket_comments" in tables else set()
+            if "ticket_comments" in tables and "ticket_cycle_id" not in comment_columns:
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE ticket_comments ADD COLUMN IF NOT EXISTS ticket_cycle_id UUID REFERENCES ticket_cycles(id) ON DELETE SET NULL"
+                        )
+                    )
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_comments_ticket_cycle_id ON ticket_comments (ticket_cycle_id)"))
+                else:
+                    conn.execute(text("ALTER TABLE ticket_comments ADD COLUMN ticket_cycle_id VARCHAR(36)"))
+
+            attachment_columns = {col["name"] for col in inspector.get_columns("ticket_attachments")} if "ticket_attachments" in tables else set()
+            if "ticket_attachments" in tables and "ticket_cycle_id" not in attachment_columns:
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE ticket_attachments ADD COLUMN IF NOT EXISTS ticket_cycle_id UUID REFERENCES ticket_cycles(id) ON DELETE SET NULL"
+                        )
+                    )
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_attachments_ticket_cycle_id ON ticket_attachments (ticket_cycle_id)"))
+                else:
+                    conn.execute(text("ALTER TABLE ticket_attachments ADD COLUMN ticket_cycle_id VARCHAR(36)"))
+
+            apr_columns = {col["name"] for col in inspector.get_columns("ticket_approval_requests")} if "ticket_approval_requests" in tables else set()
+            if "ticket_approval_requests" in tables and "ticket_cycle_id" not in apr_columns:
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE ticket_approval_requests ADD COLUMN IF NOT EXISTS ticket_cycle_id UUID REFERENCES ticket_cycles(id) ON DELETE SET NULL"
+                        )
+                    )
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ticket_approval_requests_ticket_cycle_id ON ticket_approval_requests (ticket_cycle_id)"))
+                else:
+                    conn.execute(text("ALTER TABLE ticket_approval_requests ADD COLUMN ticket_cycle_id VARCHAR(36)"))
+
+            ticket_rows = conn.execute(
+                text("SELECT id, sprint_id, status, created_at, updated_at, closed_at, closed_by FROM tickets")
+            ).mappings().all()
+
+            for row in ticket_rows:
+                cycle = conn.execute(
+                    text("SELECT id FROM ticket_cycles WHERE ticket_id = :ticket_id AND version_no = 1"),
+                    {"ticket_id": row["id"]},
+                ).mappings().one_or_none()
+                cycle_id = cycle["id"] if cycle else None
+                if not cycle_id:
+                    cycle_id = str(uuid.uuid4())
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO ticket_cycles (
+                              id, ticket_id, version_no, sprint_id, status,
+                              created_at, updated_at, closed_at, closed_by
+                            ) VALUES (
+                              :id, :ticket_id, 1, :sprint_id, :status,
+                              :created_at, :updated_at, :closed_at, :closed_by
+                            )
+                            """
+                        ),
+                        {
+                            "id": cycle_id,
+                            "ticket_id": row["id"],
+                            "sprint_id": row["sprint_id"],
+                            "status": row["status"],
+                            "created_at": row["created_at"],
+                            "updated_at": row["updated_at"],
+                            "closed_at": row["closed_at"],
+                            "closed_by": row["closed_by"],
+                        },
+                    )
+
+                conn.execute(
+                    text("UPDATE tickets SET current_cycle_id = :cid WHERE id = :ticket_id AND current_cycle_id IS NULL"),
+                    {"cid": cycle_id, "ticket_id": row["id"]},
+                )
+                if "ticket_comments" in tables:
+                    conn.execute(
+                        text(
+                            "UPDATE ticket_comments SET ticket_cycle_id = :cid WHERE ticket_id = :ticket_id AND ticket_cycle_id IS NULL"
+                        ),
+                        {"cid": cycle_id, "ticket_id": row["id"]},
+                    )
+                if "ticket_attachments" in tables:
+                    conn.execute(
+                        text(
+                            "UPDATE ticket_attachments SET ticket_cycle_id = :cid WHERE ticket_id = :ticket_id AND ticket_cycle_id IS NULL"
+                        ),
+                        {"cid": cycle_id, "ticket_id": row["id"]},
+                    )
+                if "ticket_approval_requests" in tables:
+                    conn.execute(
+                        text(
+                            "UPDATE ticket_approval_requests SET ticket_cycle_id = :cid WHERE ticket_id = :ticket_id AND ticket_cycle_id IS NULL"
+                        ),
+                        {"cid": cycle_id, "ticket_id": row["id"]},
+                    )
+    except Exception as exc:
+        logger.warning("Ticket cycle migration failed: %s", exc)

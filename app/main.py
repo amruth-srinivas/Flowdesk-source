@@ -5,6 +5,8 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.core.db_migrations import (
+    apply_ticket_cycles_migration,
+    apply_ticket_carryover_migration,
     apply_ticket_attachment_comment_migration,
     apply_ticket_closed_by_migration,
     apply_user_avatar_url_migration,
@@ -61,6 +63,8 @@ def startup() -> None:
     apply_ticket_attachment_comment_migration(engine)
     apply_sprint_migrations(engine)
     apply_ticket_overdue_migration(engine)
+    apply_ticket_carryover_migration(engine)
+    apply_ticket_cycles_migration(engine)
     apply_ticket_closed_by_migration(engine)
     apply_user_avatar_url_migration(engine)
     apply_user_theme_preference_migration(engine)

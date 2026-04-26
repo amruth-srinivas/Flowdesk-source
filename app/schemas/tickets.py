@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.constants.enums import ApprovalStatus, TicketPriority, TicketStatus, TicketType
 
@@ -39,6 +39,18 @@ class TicketStatusUpdate(BaseModel):
     comment: str | None = Field(None, max_length=2000)
 
 
+class TicketReopenRequest(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=4000)
+    sprint_id: UUID | None = None
+
+    @field_validator("sprint_id", mode="before")
+    @classmethod
+    def normalize_empty_sprint_id(cls, value):
+        if value in ("", "null", "None"):
+            return None
+        return value
+
+
 class TicketDeleteConfirm(BaseModel):
     password: str = Field(..., min_length=1, max_length=500)
 
@@ -67,6 +79,11 @@ class TicketResponse(BaseModel):
     closed_by: UUID | None = None
     closed_by_name: str | None = None
     sprint_id: UUID | None = None
+    carried_from_sprint_id: UUID | None = None
+    carried_over_at: datetime | None = None
+    carryover_count: int = 0
+    current_cycle_id: UUID | None = None
+    current_cycle_version: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -124,6 +141,7 @@ class TicketHistoryResponse(BaseModel):
 class ResolutionResponse(BaseModel):
     id: UUID
     ticket_id: UUID
+    ticket_cycle_id: UUID | None = None
     resolved_by: UUID
     resolver_name: str
     resolver_avatar_url: str | None = None
@@ -141,6 +159,7 @@ class ResolutionResponse(BaseModel):
 class TicketAttachmentResponse(BaseModel):
     id: UUID
     comment_id: UUID | None = None
+    ticket_cycle_id: UUID | None = None
     filename: str
     file_size_bytes: int
     mime_type: str
@@ -174,6 +193,29 @@ class TicketApprovalNotificationResponse(BaseModel):
     ticket_id: UUID
     ticket_reference: str | None = None
     ticket_title: str
+    ticket_status: str
+    approval_request_status: str | None = None
     requested_by_name: str | None = None
     requested_at: datetime
     is_read: bool
+
+
+class TicketCycleResponse(BaseModel):
+    id: UUID
+    ticket_id: UUID
+    version_no: int
+    sprint_id: UUID | None = None
+    status: TicketStatus
+    reopen_reason: str | None = None
+    reopened_by: UUID | None = None
+    reopened_by_name: str | None = None
+    reopened_at: datetime | None = None
+    previous_cycle_id: UUID | None = None
+    closed_at: datetime | None = None
+    closed_by: UUID | None = None
+    closed_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

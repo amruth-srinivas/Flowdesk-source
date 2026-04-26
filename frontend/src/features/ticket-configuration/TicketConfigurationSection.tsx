@@ -206,8 +206,8 @@ export function TicketConfigurationSection({
       <div className="user-table-shell">
         <div className="user-table-toolbar">
           <div>
-            <h2 style={{ margin: 0, fontSize: '15px' }}>Ticket type codes</h2>
-            <p style={{ margin: '4px 0 0', color: '#62749a', fontSize: '12px' }}>
+            <h2 className="module-toolbar-title">Ticket type codes</h2>
+            <p className="module-toolbar-subtext">
               Map each ticket type to a short code (e.g. Service Request → SR). Use Custom type for org-specific categories. Used when generating ticket identifiers.
             </p>
           </div>

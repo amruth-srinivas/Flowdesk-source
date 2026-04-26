@@ -22,6 +22,8 @@ from app.models import (
     Sprint,
     Task,
     Ticket,
+    TicketCycle,
+    TicketCycleResolution,
     TicketApprovalRequest,
     TicketAttachment,
     TicketComment,
@@ -33,6 +35,7 @@ from app.schemas.tickets import (
     ApprovalDecision,
     ResolutionCreate,
     ResolutionResponse,
+    TicketCycleResponse,
     TicketApprovalRequestResponse,
     TicketApprovalNotificationResponse,
     TicketAssign,
@@ -43,6 +46,7 @@ from app.schemas.tickets import (
     TicketDeleteConfirm,
     TicketHistoryResponse,
     TicketResponse,
+    TicketReopenRequest,
     TicketStatusUpdate,
     TicketUpdate,
 )
@@ -86,6 +90,62 @@ def _validate_and_set_ticket_sprint(db: Session, ticket: Ticket, sprint_id: UUID
     ticket.sprint_id = _resolve_sprint_id_for_project(db, ticket.project_id, sprint_id)
     if ticket.sprint_id is not None:
         ticket.is_overdue = False
+    if ticket.current_cycle_id:
+        cycle = db.get(TicketCycle, ticket.current_cycle_id)
+        if cycle:
+            cycle.sprint_id = ticket.sprint_id
+
+
+def _get_or_create_active_cycle(db: Session, ticket: Ticket) -> TicketCycle:
+    if ticket.current_cycle_id:
+        cycle = db.get(TicketCycle, ticket.current_cycle_id)
+        if cycle:
+            return cycle
+
+    latest = db.execute(
+        select(TicketCycle).where(TicketCycle.ticket_id == ticket.id).order_by(TicketCycle.version_no.desc())
+    ).scalars().first()
+    if latest:
+        ticket.current_cycle_id = latest.id
+        db.add(ticket)
+        db.flush()
+        return latest
+
+    cycle = TicketCycle(
+        ticket_id=ticket.id,
+        version_no=1,
+        sprint_id=ticket.sprint_id,
+        status=ticket.status,
+        created_at=ticket.created_at,
+        updated_at=ticket.updated_at,
+        closed_at=ticket.closed_at,
+        closed_by=ticket.closed_by,
+    )
+    db.add(cycle)
+    db.flush()
+    ticket.current_cycle_id = cycle.id
+    db.add(ticket)
+    db.flush()
+    return cycle
+
+
+def _resolve_cycle(
+    db: Session,
+    ticket: Ticket,
+    cycle_id: UUID | None,
+    *,
+    require_active: bool = False,
+) -> TicketCycle:
+    active = _get_or_create_active_cycle(db, ticket)
+    target = active
+    if cycle_id is not None:
+        selected = db.get(TicketCycle, cycle_id)
+        if not selected or selected.ticket_id != ticket.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket cycle not found")
+        target = selected
+    if require_active and target.id != active.id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only the active cycle can be modified")
+    return target
 
 
 def _next_public_reference(db: Session, project_id: UUID, ticket_type: TicketType) -> str:
@@ -128,10 +188,50 @@ def _resolution_to_response(db: Session, r: Resolution) -> ResolutionResponse:
     )
 
 
+def _cycle_resolution_to_response(db: Session, r: TicketCycleResolution) -> ResolutionResponse:
+    return ResolutionResponse(
+        id=r.id,
+        ticket_id=r.ticket_id,
+        ticket_cycle_id=r.ticket_cycle_id,
+        resolved_by=r.resolved_by,
+        resolver_name=_user_name(db, r.resolved_by),
+        resolver_avatar_url=_user_avatar_url(db, r.resolved_by),
+        summary=r.summary,
+        root_cause=r.root_cause,
+        steps_taken=r.steps_taken,
+        kb_article_id=r.kb_article_id,
+        created_at=r.created_at,
+        updated_at=r.updated_at,
+    )
+
+
+def _cycle_to_response(db: Session, cycle: TicketCycle) -> TicketCycleResponse:
+    return TicketCycleResponse(
+        id=cycle.id,
+        ticket_id=cycle.ticket_id,
+        version_no=cycle.version_no,
+        sprint_id=cycle.sprint_id,
+        status=cycle.status,
+        reopen_reason=cycle.reopen_reason,
+        reopened_by=cycle.reopened_by,
+        reopened_by_name=_user_name(db, cycle.reopened_by) if cycle.reopened_by else None,
+        reopened_at=cycle.reopened_at,
+        previous_cycle_id=cycle.previous_cycle_id,
+        closed_at=cycle.closed_at,
+        closed_by=cycle.closed_by,
+        closed_by_name=_user_name(db, cycle.closed_by) if cycle.closed_by else None,
+        created_at=cycle.created_at,
+        updated_at=cycle.updated_at,
+    )
+
+
 def _ticket_to_response(db: Session, ticket: Ticket) -> TicketResponse:
     ids = list(ticket.assignee_ids or [])
     names = [_user_name(db, uid) for uid in ids]
-    resolution = db.execute(select(Resolution).where(Resolution.ticket_id == ticket.id)).scalar_one_or_none()
+    active_cycle = _get_or_create_active_cycle(db, ticket)
+    resolution = db.execute(
+        select(TicketCycleResolution).where(TicketCycleResolution.ticket_cycle_id == active_cycle.id)
+    ).scalar_one_or_none()
     base = TicketResponse.model_validate(ticket)
     return base.model_copy(
         update={
@@ -141,6 +241,8 @@ def _ticket_to_response(db: Session, ticket: Ticket) -> TicketResponse:
             "resolved_by": resolution.resolved_by if resolution else None,
             "resolved_by_name": _user_name(db, resolution.resolved_by) if resolution else None,
             "closed_by_name": _user_name(db, ticket.closed_by) if ticket.closed_by else None,
+            "current_cycle_id": active_cycle.id,
+            "current_cycle_version": active_cycle.version_no,
         }
     )
 
@@ -165,12 +267,15 @@ def _approval_notification_response(
     request: TicketApprovalRequest | None,
     db: Session,
 ) -> TicketApprovalNotificationResponse:
+    ticket_status = ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status)
     return TicketApprovalNotificationResponse(
         notification_id=notification.id,
         request_id=request.id if request else None,
         ticket_id=ticket.id,
         ticket_reference=ticket.public_reference,
         ticket_title=ticket.title,
+        ticket_status=ticket_status,
+        approval_request_status=request.status if request else None,
         requested_by_name=_user_name(db, request.requested_by) if request else None,
         requested_at=request.requested_at if request else notification.created_at,
         is_read=notification.is_read,
@@ -200,6 +305,19 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db), user=Dep
         public_reference=public_ref,
         sprint_id=resolved_sprint_id,
     )
+    db.add(ticket)
+    db.flush()
+    cycle = TicketCycle(
+        ticket_id=ticket.id,
+        version_no=1,
+        sprint_id=ticket.sprint_id,
+        status=ticket.status,
+        created_at=ticket.created_at,
+        updated_at=ticket.updated_at,
+    )
+    db.add(cycle)
+    db.flush()
+    ticket.current_cycle_id = cycle.id
     db.add(ticket)
     db.commit()
     db.refresh(ticket)
@@ -282,12 +400,82 @@ def update_status(ticket_id: str, payload: TicketStatusUpdate, db: Session = Dep
     return _ticket_to_response(db, updated)
 
 
+@router.get("/{ticket_id}/cycles", response_model=list[TicketCycleResponse])
+def list_ticket_cycles(ticket_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    _ensure_ticket_access(db, user, ticket)
+    _get_or_create_active_cycle(db, ticket)
+    rows = db.execute(
+        select(TicketCycle).where(TicketCycle.ticket_id == ticket.id).order_by(TicketCycle.version_no.desc())
+    ).scalars().all()
+    return [_cycle_to_response(db, row) for row in rows]
+
+
+@router.post("/{ticket_id}/reopen", response_model=TicketResponse)
+def reopen_ticket(
+    ticket_id: str,
+    payload: TicketReopenRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_member),
+):
+    if user.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin/Lead can reopen tickets")
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    _ensure_ticket_access(db, user, ticket)
+    active = _get_or_create_active_cycle(db, ticket)
+    if active.status != TicketStatus.CLOSED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only closed tickets can be reopened")
+
+    sprint_id = _resolve_sprint_id_for_project(db, ticket.project_id, payload.sprint_id)
+    max_version = db.scalar(
+        select(func.max(TicketCycle.version_no)).where(TicketCycle.ticket_id == ticket.id)
+    ) or 1
+    next_cycle = TicketCycle(
+        ticket_id=ticket.id,
+        version_no=int(max_version) + 1,
+        sprint_id=sprint_id,
+        status=TicketStatus.OPEN,
+        reopen_reason=payload.reason.strip(),
+        reopened_by=user.id,
+        reopened_at=datetime.utcnow(),
+        previous_cycle_id=active.id,
+    )
+    db.add(next_cycle)
+    db.flush()
+
+    ticket.status = TicketStatus.OPEN
+    ticket.sprint_id = sprint_id
+    ticket.current_cycle_id = next_cycle.id
+    ticket.closed_at = None
+    ticket.closed_by = None
+    db.add(
+        TicketHistory(
+            ticket_id=ticket.id,
+            changed_by=user.id,
+            field_name="reopened",
+            old_value=f"cycle_v{active.version_no}",
+            new_value=f"cycle_v{next_cycle.version_no}",
+            change_note=payload.reason.strip(),
+        )
+    )
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+    return _ticket_to_response(db, ticket)
+
+
 def _delete_ticket_and_dependencies(db: Session, ticket: Ticket) -> None:
     tid = ticket.id
     db.execute(delete(TicketAttachment).where(TicketAttachment.ticket_id == tid))
     db.execute(delete(TicketComment).where(TicketComment.ticket_id == tid))
     db.execute(delete(TicketHistory).where(TicketHistory.ticket_id == tid))
     db.execute(delete(TicketApprovalRequest).where(TicketApprovalRequest.ticket_id == tid))
+    db.execute(delete(TicketCycleResolution).where(TicketCycleResolution.ticket_id == tid))
+    db.execute(delete(TicketCycle).where(TicketCycle.ticket_id == tid))
     resolution = db.execute(select(Resolution).where(Resolution.ticket_id == tid)).scalar_one_or_none()
     if resolution:
         db.execute(delete(Approval).where(Approval.resolution_id == resolution.id))
@@ -339,6 +527,7 @@ def request_approval(ticket_id: str, db: Session = Depends(get_db), user=Depends
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
+    active_cycle = _get_or_create_active_cycle(db, ticket)
     if ticket.status != TicketStatus.RESOLVED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Approval can be requested only for resolved tickets")
     existing = db.execute(
@@ -349,7 +538,7 @@ def request_approval(ticket_id: str, db: Session = Depends(get_db), user=Depends
     ).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approval already requested")
-    req = TicketApprovalRequest(ticket_id=ticket.id, requested_by=user.id, status="pending")
+    req = TicketApprovalRequest(ticket_id=ticket.id, ticket_cycle_id=active_cycle.id, requested_by=user.id, status="pending")
     db.add(req)
 
     project = db.get(Project, ticket.project_id)
@@ -463,6 +652,19 @@ def list_approval_notifications(db: Session = Depends(get_db), user=Depends(get_
     return out
 
 
+@router.delete("/notifications/approval/all", status_code=status.HTTP_204_NO_CONTENT)
+def delete_all_approval_notifications(db: Session = Depends(get_db), user=Depends(get_current_member)):
+    """Remove every ticket-approval notification for the current user."""
+    db.execute(
+        delete(Notification).where(
+            Notification.user_id == user.id,
+            Notification.type == "ticket_approval_request",
+        )
+    )
+    db.commit()
+    return None
+
+
 @router.patch("/notifications/{notification_id}/read")
 def mark_notification_read(notification_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
     row = db.get(Notification, notification_id)
@@ -509,12 +711,21 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user=Depends(get_c
 
 
 @router.get("/{ticket_id}/comments", response_model=list[TicketCommentResponse])
-def list_comments(ticket_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
+def list_comments(
+    ticket_id: str,
+    cycle_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_member),
+):
     ticket = db.get(Ticket, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
-    stmt = select(TicketComment).where(TicketComment.ticket_id == ticket_id).order_by(TicketComment.created_at.asc())
+    cycle = _resolve_cycle(db, ticket, cycle_id)
+    stmt = select(TicketComment).where(
+        TicketComment.ticket_id == ticket_id,
+        TicketComment.ticket_cycle_id == cycle.id,
+    ).order_by(TicketComment.created_at.asc())
     if user.role == UserRole.MEMBER:
         stmt = stmt.where(TicketComment.is_internal.is_(False))
     rows = db.execute(stmt).scalars().all()
@@ -538,6 +749,7 @@ def list_comments(ticket_id: str, db: Session = Depends(get_db), user=Depends(ge
 def add_comment(
     ticket_id: str,
     payload: TicketCommentCreate,
+    cycle_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     user=Depends(get_current_member),
 ):
@@ -545,10 +757,12 @@ def add_comment(
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
+    cycle = _resolve_cycle(db, ticket, cycle_id, require_active=True)
     if payload.is_internal and user.role == UserRole.MEMBER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only leads and admins can add internal notes")
     row = TicketComment(
         ticket_id=ticket.id,
+        ticket_cycle_id=cycle.id,
         author_id=user.id,
         body=payload.body.strip(),
         is_internal=payload.is_internal,
@@ -595,24 +809,47 @@ def list_history(ticket_id: str, db: Session = Depends(get_db), user=Depends(get
 
 
 @router.get("/{ticket_id}/resolution", response_model=ResolutionResponse)
-def get_resolution(ticket_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
+def get_resolution(
+    ticket_id: str,
+    cycle_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_member),
+):
     ticket = db.get(Ticket, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
-    r = db.execute(select(Resolution).where(Resolution.ticket_id == ticket_id)).scalar_one_or_none()
+    cycle = _resolve_cycle(db, ticket, cycle_id)
+    r = db.execute(
+        select(TicketCycleResolution).where(
+            TicketCycleResolution.ticket_id == ticket.id,
+            TicketCycleResolution.ticket_cycle_id == cycle.id,
+        )
+    ).scalar_one_or_none()
     if not r:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No resolution recorded")
-    return _resolution_to_response(db, r)
+    return _cycle_resolution_to_response(db, r)
 
 
 @router.put("/{ticket_id}/resolution", response_model=ResolutionResponse)
-def upsert_resolution(ticket_id: str, payload: ResolutionCreate, db: Session = Depends(get_db), user=Depends(get_current_member)):
+def upsert_resolution(
+    ticket_id: str,
+    payload: ResolutionCreate,
+    cycle_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_member),
+):
     ticket = db.get(Ticket, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
-    r = db.execute(select(Resolution).where(Resolution.ticket_id == ticket_id)).scalar_one_or_none()
+    cycle = _resolve_cycle(db, ticket, cycle_id, require_active=True)
+    r = db.execute(
+        select(TicketCycleResolution).where(
+            TicketCycleResolution.ticket_id == ticket.id,
+            TicketCycleResolution.ticket_cycle_id == cycle.id,
+        )
+    ).scalar_one_or_none()
     if r:
         r.summary = payload.summary.strip()
         r.root_cause = payload.root_cause.strip() if payload.root_cause else None
@@ -620,8 +857,9 @@ def upsert_resolution(ticket_id: str, payload: ResolutionCreate, db: Session = D
         r.kb_article_id = payload.kb_article_id
         r.resolved_by = user.id
     else:
-        r = Resolution(
+        r = TicketCycleResolution(
             ticket_id=ticket.id,
+            ticket_cycle_id=cycle.id,
             resolved_by=user.id,
             summary=payload.summary.strip(),
             root_cause=payload.root_cause.strip() if payload.root_cause else None,
@@ -631,22 +869,32 @@ def upsert_resolution(ticket_id: str, payload: ResolutionCreate, db: Session = D
         db.add(r)
     db.commit()
     db.refresh(r)
-    return _resolution_to_response(db, r)
+    return _cycle_resolution_to_response(db, r)
 
 
 @router.get("/{ticket_id}/attachments", response_model=list[TicketAttachmentResponse])
-def list_attachments(ticket_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
+def list_attachments(
+    ticket_id: str,
+    cycle_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_member),
+):
     ticket = db.get(Ticket, ticket_id)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
+    cycle = _resolve_cycle(db, ticket, cycle_id)
     rows = db.execute(
-        select(TicketAttachment).where(TicketAttachment.ticket_id == ticket_id).order_by(TicketAttachment.created_at.desc())
+        select(TicketAttachment).where(
+            TicketAttachment.ticket_id == ticket_id,
+            TicketAttachment.ticket_cycle_id == cycle.id,
+        ).order_by(TicketAttachment.created_at.desc())
     ).scalars().all()
     return [
         TicketAttachmentResponse(
             id=a.id,
             comment_id=a.comment_id,
+            ticket_cycle_id=a.ticket_cycle_id,
             filename=a.filename,
             file_size_bytes=a.file_size_bytes,
             mime_type=a.mime_type,
@@ -662,6 +910,7 @@ def list_attachments(ticket_id: str, db: Session = Depends(get_db), user=Depends
 @router.post("/{ticket_id}/attachments", response_model=TicketAttachmentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_attachment(
     ticket_id: str,
+    cycle_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     user=Depends(get_current_member),
     comment_id: UUID | None = Form(None),
@@ -671,9 +920,10 @@ async def upload_attachment(
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     _ensure_ticket_access(db, user, ticket)
+    cycle = _resolve_cycle(db, ticket, cycle_id, require_active=True)
     if comment_id is not None:
         comment = db.get(TicketComment, comment_id)
-        if not comment or comment.ticket_id != ticket.id:
+        if not comment or comment.ticket_id != ticket.id or comment.ticket_cycle_id != cycle.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found for this ticket")
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing filename")
@@ -691,6 +941,7 @@ async def upload_attachment(
     dest_path.write_bytes(content)
     row = TicketAttachment(
         ticket_id=ticket.id,
+        ticket_cycle_id=cycle.id,
         comment_id=comment_id,
         uploaded_by=user.id,
         filename=orig[:300],
@@ -704,6 +955,7 @@ async def upload_attachment(
     return TicketAttachmentResponse(
         id=row.id,
         comment_id=row.comment_id,
+        ticket_cycle_id=row.ticket_cycle_id,
         filename=row.filename,
         file_size_bytes=row.file_size_bytes,
         mime_type=row.mime_type,

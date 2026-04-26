@@ -124,6 +124,14 @@ class Ticket(Base, TimestampMixin):
     sprint_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("sprints.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    carried_from_sprint_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sprints.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    carried_over_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    carryover_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    current_cycle_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ticket_cycles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
 
 class TicketConfiguration(Base, TimestampMixin):
@@ -141,6 +149,9 @@ class TicketComment(Base, TimestampMixin):
     __tablename__ = "ticket_comments"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     ticket_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False)
+    ticket_cycle_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ticket_cycles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     author_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     is_internal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -162,6 +173,9 @@ class TicketAttachment(Base):
     __tablename__ = "ticket_attachments"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     ticket_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False)
+    ticket_cycle_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ticket_cycles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     comment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("ticket_comments.id"), nullable=True)
     uploaded_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     filename: Mapped[str] = mapped_column(String(300), nullable=False)
@@ -175,6 +189,9 @@ class TicketApprovalRequest(Base):
     __tablename__ = "ticket_approval_requests"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     ticket_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False, index=True)
+    ticket_cycle_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ticket_cycles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     requested_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
@@ -206,6 +223,51 @@ class Resolution(Base, TimestampMixin):
     __tablename__ = "resolutions"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     ticket_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tickets.id"), unique=True, nullable=False)
+    resolved_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    steps_taken: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kb_article_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("kb_articles.id"), nullable=True)
+
+
+class TicketCycle(Base):
+    __tablename__ = "ticket_cycles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    sprint_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sprints.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[TicketStatus] = mapped_column(
+        SAEnum(TicketStatus, name="ticket_status"), default=TicketStatus.OPEN, nullable=False
+    )
+    reopen_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reopened_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    previous_cycle_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ticket_cycles.id", ondelete="SET NULL"), nullable=True
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
+class TicketCycleResolution(Base, TimestampMixin):
+    __tablename__ = "ticket_cycle_resolutions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ticket_cycle_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ticket_cycles.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     resolved_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)

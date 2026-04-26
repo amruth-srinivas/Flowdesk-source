@@ -1,4 +1,4 @@
-import { Bell, LogOut, Settings } from 'lucide-react';
+import { Bell, Check, CheckCheck, LogOut, Settings } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from 'primereact/button';
 import { Chart } from 'primereact/chart';
@@ -8,13 +8,51 @@ import { InputText } from 'primereact/inputtext';
 import { Password } from 'primereact/password';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { CalendarEventRecord, ThemePreference, TicketRecord } from '../../lib/api';
+import type { CalendarEventRecord, ThemePreference, TicketApprovalNotificationRecord, TicketRecord } from '../../lib/api';
 
 type TopNavItem = {
   id: string;
   label: string;
   icon: ReactNode;
 };
+
+function canShowAcknowledgeApprovalNotification(item: Pick<TicketApprovalNotificationRecord, 'request_id' | 'ticket_status' | 'approval_request_status'>): boolean {
+  if (!item.request_id) {
+    return false;
+  }
+  const ticketStatus = (item.ticket_status ?? '').toLowerCase().trim();
+  if (ticketStatus === 'closed') {
+    return false;
+  }
+  const ars = item.approval_request_status;
+  if (ars != null && ars !== 'pending') {
+    return false;
+  }
+  return true;
+}
+
+function formatTicketStatusLabel(status: string | undefined): string {
+  const s = (status ?? '').toLowerCase().replace(/_/g, ' ');
+  if (!s) return 'Unknown';
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatNotificationRelativeTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return iso;
+  }
+  const diffMs = Date.now() - d.getTime();
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 45) return 'Just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const days = Math.floor(hr / 24);
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 type TopHeaderProps = {
   topNav: TopNavItem[];
@@ -30,21 +68,15 @@ type TopHeaderProps = {
   currentUserCreatedAt?: string;
   tickets?: TicketRecord[];
   events?: CalendarEventRecord[];
-  notifications: Array<{
-    notification_id: string;
-    request_id: string | null;
-    ticket_reference: string | null;
-    ticket_title: string;
-    requested_by_name: string | null;
-    requested_at: string;
-    is_read: boolean;
-  }>;
+  notifications: TicketApprovalNotificationRecord[];
   notificationBusyId?: string | null; // request_id for acknowledge
   notificationReadBusyId?: string | null; // notification_id for mark read
   notificationDeleteBusyId?: string | null; // notification_id for delete
-  onAcknowledgeNotification?: (requestId: string) => void;
+  notificationDeleteAllBusy?: boolean;
+  onAcknowledgeNotification?: (requestId: string, ticketId: string) => Promise<void> | void;
   onMarkNotificationRead?: (notificationId: string) => void;
   onDeleteNotification?: (notificationId: string) => void;
+  onDeleteAllNotifications?: () => void;
   onUpdateProfile?: (payload: { name: string; email: string; avatar_url?: string | null }) => Promise<void>;
   currentThemePreference?: ThemePreference;
   onUpdateThemePreference?: (theme: ThemePreference) => Promise<void>;
@@ -70,15 +102,29 @@ export function TopHeader({
   notificationBusyId,
   notificationReadBusyId,
   notificationDeleteBusyId,
+  notificationDeleteAllBusy = false,
   onAcknowledgeNotification,
   onMarkNotificationRead,
   onDeleteNotification,
+  onDeleteAllNotifications,
   onUpdateProfile,
   currentThemePreference,
   onUpdateThemePreference,
   onUpdatePassword,
   onLogout,
 }: TopHeaderProps) {
+  async function handleAcknowledgeClick(item: { request_id: string | null; ticket_id: string }) {
+    if (!item.request_id || !onAcknowledgeNotification) {
+      return;
+    }
+    try {
+      await onAcknowledgeNotification(item.request_id, item.ticket_id);
+      setIsNotificationModalOpen(false);
+    } catch {
+      // Parent handles feedback; keep dialog open so user can retry.
+    }
+  }
+
   const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [profileName, setProfileName] = useState(currentUserName);
@@ -87,8 +133,6 @@ export function TopHeader({
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [activeSettingsTab, setActiveSettingsTab] = useState<'details' | 'preferences' | 'summary'>('details');
-  const [prefEmailNotifs, setPrefEmailNotifs] = useState(true);
-  const [prefCompactView, setPrefCompactView] = useState(false);
   const [selectedTheme, setSelectedTheme] = useState<ThemePreference>(currentThemePreference ?? 'light');
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState('');
@@ -424,18 +468,23 @@ export function TopHeader({
         <span className="sidebar-brand-text">FLOWDESK</span>
       </div>
       <div className="header-actions">
-        <div className="header-notifications">
-          <button
-            type="button"
-            className={`notification-btn ${isNotificationModalOpen ? 'notification-btn--open' : ''}`}
-            onClick={() => setIsNotificationModalOpen(true)}
-            aria-label="Notifications"
-            title="Notifications"
-          >
-            <Bell size={16} />
-            {notifications.filter((n) => !n.is_read).length ? (
-              <span className="notification-badge">{notifications.filter((n) => !n.is_read).length}</span>
-            ) : null}
+        <div className="header-icon-actions">
+          <div className="header-notifications">
+            <button
+              type="button"
+              className={`notification-btn ${isNotificationModalOpen ? 'notification-btn--open' : ''}`}
+              onClick={() => setIsNotificationModalOpen(true)}
+              aria-label="Notifications"
+              title="Notifications"
+            >
+              <Bell size={16} />
+              {notifications.filter((n) => !n.is_read).length ? (
+                <span className="notification-badge">{notifications.filter((n) => !n.is_read).length}</span>
+              ) : null}
+            </button>
+          </div>
+          <button className="settings-btn" onClick={() => setIsSettingsModalOpen(true)} type="button" title="Settings" aria-label="Settings">
+            <Settings size={16} />
           </button>
         </div>
         <div className="user-chip">
@@ -452,65 +501,158 @@ export function TopHeader({
             </span>
           </div>
         </div>
-        <button className="settings-btn" onClick={() => setIsSettingsModalOpen(true)} type="button" title="Settings" aria-label="Settings">
-          <Settings size={16} />
-        </button>
         <button className="logout-btn" onClick={onLogout} type="button">
           <LogOut size={16} />
           Logout
         </button>
       </div>
       <Dialog
-        header="Approval notifications"
+        header={
+          <div className="notification-dialog-header">
+            <div className="notification-dialog-header-text">
+              <h2 className="notification-dialog-heading">Approvals inbox</h2>
+              <p className="notification-dialog-lede">Closure requests your team needs you to review.</p>
+            </div>
+          </div>
+        }
         visible={isNotificationModalOpen}
         onHide={() => setIsNotificationModalOpen(false)}
-        style={{ width: 'min(720px, 95vw)' }}
-        className="notification-dialog"
+        style={{ width: 'min(720px, 96vw)' }}
+        className="notification-dialog notification-dialog--inbox"
+        contentClassName="notification-dialog-content"
         modal
+        dismissableMask
       >
         {notifications.length ? (
-          <ul className="notification-list notification-list--modal">
-            {notifications.map((item) => (
-              <li key={item.notification_id} className={`notification-item ${item.is_read ? 'notification-item--read' : ''}`}>
-                <div className="notification-item-text">
-                  <strong>{item.ticket_reference ?? 'Ticket'}</strong>
-                  <span>{item.ticket_title}</span>
-                  <small>
-                    {item.requested_by_name ? `Requested by ${item.requested_by_name}` : 'Approval requested'} ·{' '}
-                    {new Date(item.requested_at).toLocaleString()}
-                  </small>
-                </div>
-                <div className="notification-item-actions">
+          <div className="notification-inbox">
+            <div className="notification-inbox-toolbar" aria-live="polite">
+              <span className="notification-inbox-toolbar-label">
+                <strong>{notifications.length}</strong>
+                <span className="notification-inbox-toolbar-muted">
+                  {notifications.length === 1 ? ' item' : ' items'}
+                </span>
+              </span>
+              <div className="notification-inbox-toolbar-right">
+                {onDeleteAllNotifications ? (
                   <button
                     type="button"
-                    className="notification-read-btn"
-                    disabled={item.is_read || notificationReadBusyId === item.notification_id}
-                    onClick={() => onMarkNotificationRead?.(item.notification_id)}
+                    className="notification-inbox-clear-all"
+                    disabled={notificationDeleteAllBusy}
+                    onClick={() => onDeleteAllNotifications()}
                   >
-                    {notificationReadBusyId === item.notification_id ? 'Marking…' : item.is_read ? 'Read' : 'Mark as read'}
+                    {notificationDeleteAllBusy ? 'Clearing…' : 'Clear all'}
                   </button>
-                  <button
-                    type="button"
-                    className="notification-delete-btn"
-                    disabled={notificationDeleteBusyId === item.notification_id}
-                    onClick={() => onDeleteNotification?.(item.notification_id)}
+                ) : null}
+                {notifications.filter((n) => !n.is_read).length > 0 ? (
+                  <span className="notification-inbox-unread-pill">
+                    {notifications.filter((n) => !n.is_read).length} unread
+                  </span>
+                ) : (
+                  <span className="notification-inbox-all-read">All caught up</span>
+                )}
+              </div>
+            </div>
+            <ul className="notification-inbox-list">
+              {notifications.map((item) => {
+                const statusKey = (item.ticket_status ?? 'open').toLowerCase().replace(/\s+/g, '_');
+                return (
+                  <li
+                    key={item.notification_id}
+                    className={`notification-inbox-card ${item.is_read ? 'notification-inbox-card--read' : 'notification-inbox-card--unread'}`}
                   >
-                    {notificationDeleteBusyId === item.notification_id ? 'Deleting…' : 'Delete'}
-                  </button>
-                  <button
-                    type="button"
-                    className="notification-ack-btn"
-                    disabled={!item.request_id || notificationBusyId === item.request_id}
-                    onClick={() => item.request_id && onAcknowledgeNotification?.(item.request_id)}
-                  >
-                    {notificationBusyId === item.request_id ? 'Closing…' : 'Acknowledge & close'}
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+                    <div className="notification-inbox-card-icon" aria-hidden>
+                      <i className="pi pi-shield" />
+                    </div>
+                    <div className="notification-inbox-card-body">
+                      <div className="notification-inbox-card-row">
+                        <span className="notification-inbox-ref">{item.ticket_reference ?? 'Ticket'}</span>
+                        <span className={`notification-inbox-status notification-inbox-status--${statusKey}`}>
+                          {formatTicketStatusLabel(item.ticket_status)}
+                        </span>
+                        {!item.is_read ? (
+                          <span className="notification-inbox-new-badge" aria-label="Unread notification">
+                            New
+                          </span>
+                        ) : null}
+                      </div>
+                      <h3 className="notification-inbox-title">{item.ticket_title}</h3>
+                      <div className="notification-inbox-meta">
+                        <span className="notification-inbox-meta-block">
+                          <i className="pi pi-user" aria-hidden />
+                          <span>{item.requested_by_name ? item.requested_by_name : 'Team member'}</span>
+                        </span>
+                        <span className="notification-inbox-meta-sep" aria-hidden>
+                          ·
+                        </span>
+                        <span className="notification-inbox-meta-block">
+                          <i className="pi pi-clock" aria-hidden />
+                          <time dateTime={item.requested_at} title={new Date(item.requested_at).toLocaleString()}>
+                            {formatNotificationRelativeTime(item.requested_at)}
+                          </time>
+                        </span>
+                        {item.is_read ? (
+                          <span className="notification-inbox-meta-read" title="Read" aria-label="Read">
+                            <CheckCheck className="notification-inbox-doubletick" size={15} strokeWidth={2.4} aria-hidden />
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="notification-inbox-actions">
+                        <button
+                          type="button"
+                          className="notification-inbox-btn notification-inbox-btn--secondary"
+                          disabled={
+                            notificationDeleteAllBusy ||
+                            item.is_read ||
+                            notificationReadBusyId === item.notification_id
+                          }
+                          onClick={() => onMarkNotificationRead?.(item.notification_id)}
+                        >
+                          {item.is_read ? (
+                            <CheckCheck className="notification-inbox-doubletick notification-inbox-doubletick--muted" size={16} strokeWidth={2.4} aria-hidden />
+                          ) : (
+                            <Check size={16} strokeWidth={2.4} className="notification-inbox-markread-icon" aria-hidden />
+                          )}
+                          {notificationReadBusyId === item.notification_id ? 'Saving…' : item.is_read ? 'Read' : 'Mark read'}
+                        </button>
+                        <button
+                          type="button"
+                          className="notification-inbox-btn notification-inbox-btn--danger"
+                          disabled={
+                            notificationDeleteAllBusy || notificationDeleteBusyId === item.notification_id
+                          }
+                          onClick={() => onDeleteNotification?.(item.notification_id)}
+                        >
+                          <i className="pi pi-trash" aria-hidden />
+                          {notificationDeleteBusyId === item.notification_id ? 'Removing…' : 'Remove'}
+                        </button>
+                        {canShowAcknowledgeApprovalNotification(item) ? (
+                          <button
+                            type="button"
+                            className="notification-inbox-btn notification-inbox-btn--primary"
+                            disabled={notificationDeleteAllBusy || notificationBusyId === item.request_id}
+                            onClick={() => void handleAcknowledgeClick(item)}
+                          >
+                            <i className="pi pi-verified" aria-hidden />
+                            {notificationBusyId === item.request_id ? 'Closing…' : 'Acknowledge & close'}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         ) : (
-          <p className="notification-empty">No notifications.</p>
+          <div className="notification-inbox-empty">
+            <div className="notification-inbox-empty-icon" aria-hidden>
+              <i className="pi pi-inbox" />
+            </div>
+            <h3 className="notification-inbox-empty-title">{"You're all set"}</h3>
+            <p className="notification-inbox-empty-copy">
+              {"No approval notifications right now. New requests will appear here."}
+            </p>
+          </div>
         )}
       </Dialog>
       <Dialog
@@ -681,14 +823,6 @@ export function TopHeader({
 
             {activeSettingsTab === 'preferences' ? (
               <div className="settings-pref">
-                <label className="settings-check-row">
-                  <input type="checkbox" checked={prefEmailNotifs} onChange={(e) => setPrefEmailNotifs(e.target.checked)} />
-                  <span>Enable email notifications for approvals</span>
-                </label>
-                <label className="settings-check-row">
-                  <input type="checkbox" checked={prefCompactView} onChange={(e) => setPrefCompactView(e.target.checked)} />
-                  <span>Use compact table density</span>
-                </label>
                 <div className="settings-pref-theme-row">
                   <label className="settings-pref-field">
                     <span>Application theme</span>

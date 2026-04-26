@@ -31,6 +31,7 @@ import type {
   TicketType,
   TicketUpdatePayload,
   TicketPriority,
+  TicketReopenPayload,
   UserRecord,
 } from '../../lib/api';
 
@@ -83,7 +84,9 @@ function humanize(s: string): string {
 }
 
 export function displayTicketRef(row: TicketRecord): string {
-  return row.public_reference?.trim() || `#${row.ticket_number}`;
+  const base = row.public_reference?.trim() || `#${row.ticket_number}`;
+  const version = row.current_cycle_version ?? 1;
+  return version > 1 ? `${base} · V${version}` : base;
 }
 
 function previewNextReference(
@@ -268,6 +271,7 @@ type TicketManagementSectionProps = {
   onCreateTicket: (payload: TicketCreatePayload) => Promise<TicketRecord>;
   onUpdateTicket: (id: string, payload: TicketUpdatePayload) => Promise<TicketRecord>;
   onPatchStatus: (id: string, status: TicketStatus, comment?: string | null) => Promise<TicketRecord>;
+  onReopenTicket: (id: string, payload: TicketReopenPayload) => Promise<TicketRecord>;
   onDeleteTicket: (id: string, password: string) => Promise<void>;
   /** Lead: full ticket CRUD. Member: assigned tickets, conversation & resolution. */
   ticketRole: 'lead' | 'member';
@@ -275,6 +279,7 @@ type TicketManagementSectionProps = {
   canEditTickets: boolean;
   /** Only leads (and backend Admin) may delete; still limited to Open / In progress tickets. */
   canDeleteTickets: boolean;
+  focusTicketId?: string | null;
 };
 
 export function TicketManagementSection({
@@ -295,11 +300,13 @@ export function TicketManagementSection({
   onCreateTicket,
   onUpdateTicket,
   onPatchStatus,
+  onReopenTicket,
   onDeleteTicket,
   ticketRole,
   canCreateTickets,
   canEditTickets,
   canDeleteTickets,
+  focusTicketId,
 }: TicketManagementSectionProps) {
   type Panel = 'none' | 'create' | 'edit';
   type StatusChangeSource = 'list' | 'kanban';
@@ -320,6 +327,10 @@ export function TicketManagementSection({
   const [deleteConfirmPassword, setDeleteConfirmPassword] = useState('');
   const [deleteShowPassword, setDeleteShowPassword] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [reopenDialogOpen, setReopenDialogOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
+  const [reopenSprintId, setReopenSprintId] = useState<string | null>(null);
+  const [reopenBusy, setReopenBusy] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<{
     ticketId: string;
     nextStatus: TicketStatus;
@@ -448,6 +459,21 @@ export function TicketManagementSection({
     return [none, ...opts];
   }, [projectId, sprints]);
 
+  const sprintOptionsForReopen = useMemo(() => {
+    const none = { label: 'Backlog (no sprint)', value: null as string | null };
+    if (!editingTicket) {
+      return [none];
+    }
+    const rows = sprints.filter((s) => (s.project_ids ?? []).includes(editingTicket.project_id));
+    return [
+      none,
+      ...rows.map((s) => ({
+        label: `${s.title} (${s.start_date} → ${s.end_date})`,
+        value: s.id,
+      })),
+    ];
+  }, [editingTicket, sprints]);
+
   const hydrateFromTicket = useCallback((row: TicketRecord) => {
     setProjectId(row.project_id);
     setTitle(row.title);
@@ -459,6 +485,21 @@ export function TicketManagementSection({
     setDueDate(parseDue(row.due_date));
     setFormError('');
   }, []);
+
+  useEffect(() => {
+    if (!focusTicketId) {
+      return;
+    }
+    const target = tickets.find((t) => t.id === focusTicketId);
+    if (!target) {
+      return;
+    }
+    setEditingId(target.id);
+    setPanel('edit');
+    hydrateFromTicket(target);
+    // Do not call onFocusTicketHandled here: parent clears focusTicketId after paint
+    // (see App.handleAcknowledgeApprovalFromHeader) so StrictMode remount still works.
+  }, [focusTicketId, tickets, hydrateFromTicket]);
 
   const loadApprovalRequests = useCallback(async () => {
     try {
@@ -563,6 +604,69 @@ export function TicketManagementSection({
     setDeleteConfirmTicket(null);
     setDeleteConfirmPassword('');
     setDeleteShowPassword(false);
+  }
+
+  function openReopenDialog() {
+    if (!editingTicket || editingTicket.status !== 'closed') {
+      return;
+    }
+    setReopenReason('');
+    setReopenSprintId(editingTicket.sprint_id ?? null);
+    setReopenDialogOpen(true);
+  }
+
+  function closeReopenDialog() {
+    if (reopenBusy) {
+      return;
+    }
+    setReopenDialogOpen(false);
+    setReopenReason('');
+    setReopenSprintId(null);
+  }
+
+  async function confirmReopenTicket() {
+    if (!editingTicket) {
+      return;
+    }
+    const reason = reopenReason.trim();
+    if (!reason) {
+      statusToastRef.current?.show({
+        severity: 'warn',
+        summary: 'Reason required',
+        detail: 'Please provide why this ticket is being reopened.',
+        life: 4500,
+      });
+      return;
+    }
+    setReopenBusy(true);
+    try {
+      const normalizedSprintId = typeof reopenSprintId === 'string' ? reopenSprintId.trim() : '';
+      const updated = await onReopenTicket(editingTicket.id, {
+        reason,
+        sprint_id: normalizedSprintId || undefined,
+      });
+      statusToastRef.current?.show({
+        severity: 'success',
+        summary: 'Ticket reopened',
+        detail: `${displayTicketRef(updated)} moved to a new version.`,
+        life: 4000,
+      });
+      setReopenDialogOpen(false);
+      setReopenReason('');
+      setReopenSprintId(null);
+      setEditingId(updated.id);
+      hydrateFromTicket(updated);
+      onRefresh();
+    } catch (e) {
+      statusToastRef.current?.show({
+        severity: 'error',
+        summary: 'Reopen failed',
+        detail: e instanceof Error ? e.message : 'Could not reopen ticket',
+        life: 5500,
+      });
+    } finally {
+      setReopenBusy(false);
+    }
   }
 
   async function confirmDeleteTicket() {
@@ -1436,6 +1540,17 @@ export function TicketManagementSection({
                                 />
                               )}
                               <p className="ticket-form-hint">Workflow moves one step at a time. Only leads can close.</p>
+                              {canEditTickets && editingTicket.status === 'closed' ? (
+                                <Button
+                                  type="button"
+                                  className="ticket-reopen-btn"
+                                  icon="pi pi-refresh"
+                                  label="Reopen ticket"
+                                  onClick={openReopenDialog}
+                                  disabled={reopenBusy}
+                                  rounded
+                                />
+                              ) : null}
                             </div>
                             <div className="ticket-form-field ticket-form-field--full">
                               <label className="ticket-form-label" htmlFor={`ts-project-${viewKey}`}>
@@ -1719,6 +1834,58 @@ export function TicketManagementSection({
               icon="pi pi-check"
               onClick={() => void confirmStatusChangeWithComment()}
               disabled={statusCommentSaving}
+            />
+          </div>
+        </div>
+      </Dialog>
+      <Dialog
+        header="Reopen ticket"
+        visible={reopenDialogOpen}
+        onHide={closeReopenDialog}
+        className="ticket-reopen-dialog"
+        modal
+        draggable={false}
+        resizable={false}
+        dismissableMask={!reopenBusy}
+        closable={!reopenBusy}
+      >
+        <div className="ticket-reopen-body">
+          <p className="ticket-form-hint">
+            Start a new ticket version. Previous conversation, attachments, and resolution remain available in older versions.
+          </p>
+          <label className="ticket-form-label" htmlFor={`ticket-reopen-reason-${viewKey}`}>
+            Reopen reason
+          </label>
+          <InputTextarea
+            id={`ticket-reopen-reason-${viewKey}`}
+            value={reopenReason}
+            onChange={(e) => setReopenReason(e.target.value)}
+            rows={4}
+            className="full-width ticket-form-textarea"
+            maxLength={4000}
+            disabled={reopenBusy}
+          />
+          <label className="ticket-form-label" htmlFor={`ticket-reopen-sprint-${viewKey}`}>
+            Assign to sprint
+          </label>
+          <Dropdown
+            inputId={`ticket-reopen-sprint-${viewKey}`}
+            value={reopenSprintId}
+            options={sprintOptionsForReopen}
+            onChange={(e) => setReopenSprintId((e.value as string | null) ?? null)}
+            className="full-width"
+            filter
+            disabled={reopenBusy}
+          />
+          <div className="ticket-status-comment-actions">
+            <Button type="button" label="Cancel" text className="ticket-reopen-cancel-btn" onClick={closeReopenDialog} disabled={reopenBusy} />
+            <Button
+              type="button"
+              label={reopenBusy ? 'Reopening…' : 'Reopen ticket'}
+              icon="pi pi-refresh"
+              className="ticket-reopen-confirm-btn"
+              onClick={() => void confirmReopenTicket()}
+              disabled={reopenBusy || !reopenReason.trim()}
             />
           </div>
         </div>

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.constants.enums import TicketStatus, UserRole
-from app.models import Resolution, Ticket, TicketHistory
+from app.models import Ticket, TicketCycle, TicketCycleResolution, TicketHistory
 
 
 def dedupe_assignee_ids(assignee_ids: list[UUID]) -> list[UUID]:
@@ -62,7 +62,12 @@ def update_ticket_status(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin/Lead can close tickets")
 
     if ticket.status == TicketStatus.RESOLVED and new_status == TicketStatus.CLOSED and user.role in {UserRole.ADMIN, UserRole.LEAD}:
-        resolution = db.execute(select(Resolution).where(Resolution.ticket_id == ticket.id)).scalar_one_or_none()
+        active_cycle_id = ticket.current_cycle_id
+        resolution = None
+        if active_cycle_id:
+            resolution = db.execute(
+                select(TicketCycleResolution).where(TicketCycleResolution.ticket_cycle_id == active_cycle_id)
+            ).scalar_one_or_none()
         if not resolution or not (resolution.summary or "").strip():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ticket must have a resolution before closing")
 
@@ -73,6 +78,18 @@ def update_ticket_status(
         ticket.closed_by = user.id
     else:
         ticket.closed_by = None
+
+    if ticket.current_cycle_id:
+        cycle = db.get(TicketCycle, ticket.current_cycle_id)
+        if cycle:
+            cycle.status = new_status
+            cycle.updated_at = datetime.now(timezone.utc)
+            if new_status == TicketStatus.CLOSED:
+                cycle.closed_at = ticket.closed_at
+                cycle.closed_by = user.id
+            else:
+                cycle.closed_at = None
+                cycle.closed_by = None
     note = comment.strip() if comment else None
     db.add(
         TicketHistory(

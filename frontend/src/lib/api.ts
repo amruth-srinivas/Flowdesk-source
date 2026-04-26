@@ -816,6 +816,29 @@ export type TicketRecord = {
   closed_by: string | null;
   closed_by_name?: string | null;
   sprint_id: string | null;
+  carried_from_sprint_id?: string | null;
+  carried_over_at?: string | null;
+  carryover_count?: number;
+  current_cycle_id?: string | null;
+  current_cycle_version?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TicketCycleRecord = {
+  id: string;
+  ticket_id: string;
+  version_no: number;
+  sprint_id: string | null;
+  status: TicketStatus;
+  reopen_reason: string | null;
+  reopened_by: string | null;
+  reopened_by_name?: string | null;
+  reopened_at: string | null;
+  previous_cycle_id: string | null;
+  closed_at: string | null;
+  closed_by: string | null;
+  closed_by_name?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -880,8 +903,12 @@ export type TicketCommentCreatePayload = {
   is_internal?: boolean;
 };
 
-export async function getTicketCommentsRequest(ticketId: string): Promise<TicketCommentRecord[]> {
-  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/comments`, {
+export async function getTicketCommentsRequest(ticketId: string, cycleId?: string): Promise<TicketCommentRecord[]> {
+  const params = new URLSearchParams();
+  if (cycleId) {
+    params.set('cycle_id', cycleId);
+  }
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/comments${params.size ? `?${params}` : ''}`, {
     headers: getAuthHeaders(),
   });
   return parseResponse<TicketCommentRecord[]>(response);
@@ -890,8 +917,13 @@ export async function getTicketCommentsRequest(ticketId: string): Promise<Ticket
 export async function postTicketCommentRequest(
   ticketId: string,
   payload: TicketCommentCreatePayload,
+  options?: { cycle_id?: string },
 ): Promise<TicketCommentRecord> {
-  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/comments`, {
+  const params = new URLSearchParams();
+  if (options?.cycle_id) {
+    params.set('cycle_id', options.cycle_id);
+  }
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/comments${params.size ? `?${params}` : ''}`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(payload),
@@ -921,6 +953,7 @@ export async function getTicketHistoryRequest(ticketId: string): Promise<TicketH
 export type ResolutionRecord = {
   id: string;
   ticket_id: string;
+  ticket_cycle_id?: string | null;
   resolved_by: string;
   resolver_name: string;
   resolver_avatar_url?: string | null;
@@ -939,8 +972,12 @@ export type ResolutionUpsertPayload = {
   kb_article_id?: string | null;
 };
 
-export async function getTicketResolutionRequest(ticketId: string): Promise<ResolutionRecord | null> {
-  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/resolution`, {
+export async function getTicketResolutionRequest(ticketId: string, cycleId?: string): Promise<ResolutionRecord | null> {
+  const params = new URLSearchParams();
+  if (cycleId) {
+    params.set('cycle_id', cycleId);
+  }
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/resolution${params.size ? `?${params}` : ''}`, {
     headers: getAuthHeaders(),
   });
   if (response.status === 404) {
@@ -949,8 +986,16 @@ export async function getTicketResolutionRequest(ticketId: string): Promise<Reso
   return parseResponse<ResolutionRecord>(response);
 }
 
-export async function putTicketResolutionRequest(ticketId: string, payload: ResolutionUpsertPayload): Promise<ResolutionRecord> {
-  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/resolution`, {
+export async function putTicketResolutionRequest(
+  ticketId: string,
+  payload: ResolutionUpsertPayload,
+  options?: { cycle_id?: string },
+): Promise<ResolutionRecord> {
+  const params = new URLSearchParams();
+  if (options?.cycle_id) {
+    params.set('cycle_id', options.cycle_id);
+  }
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/resolution${params.size ? `?${params}` : ''}`, {
     method: 'PUT',
     headers: getAuthHeaders(),
     body: JSON.stringify(payload),
@@ -961,6 +1006,7 @@ export async function putTicketResolutionRequest(ticketId: string, payload: Reso
 export type TicketAttachmentRecord = {
   id: string;
   comment_id?: string | null;
+  ticket_cycle_id?: string | null;
   filename: string;
   file_size_bytes: number;
   mime_type: string;
@@ -970,8 +1016,12 @@ export type TicketAttachmentRecord = {
   created_at: string;
 };
 
-export async function getTicketAttachmentsRequest(ticketId: string): Promise<TicketAttachmentRecord[]> {
-  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/attachments`, {
+export async function getTicketAttachmentsRequest(ticketId: string, cycleId?: string): Promise<TicketAttachmentRecord[]> {
+  const params = new URLSearchParams();
+  if (cycleId) {
+    params.set('cycle_id', cycleId);
+  }
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/attachments${params.size ? `?${params}` : ''}`, {
     headers: getAuthHeaders(),
   });
   return parseResponse<TicketAttachmentRecord[]>(response);
@@ -981,6 +1031,7 @@ export async function uploadTicketAttachmentRequest(
   ticketId: string,
   file: File,
   commentId?: string,
+  options?: { cycle_id?: string },
 ): Promise<TicketAttachmentRecord> {
   const token = localStorage.getItem('accessToken');
   const body = new FormData();
@@ -988,7 +1039,11 @@ export async function uploadTicketAttachmentRequest(
   if (commentId) {
     body.append('comment_id', commentId);
   }
-  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/attachments`, {
+  const params = new URLSearchParams();
+  if (options?.cycle_id) {
+    params.set('cycle_id', options.cycle_id);
+  }
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/attachments${params.size ? `?${params}` : ''}`, {
     method: 'POST',
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -1073,6 +1128,32 @@ export async function patchTicketStatusRequest(
   return parseResponse<TicketRecord>(response);
 }
 
+export type TicketReopenPayload = {
+  reason: string;
+  sprint_id?: string | null;
+};
+
+export async function getTicketCyclesRequest(ticketId: string): Promise<TicketCycleRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/cycles`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<TicketCycleRecord[]>(response);
+}
+
+export async function reopenTicketRequest(ticketId: string, payload: TicketReopenPayload): Promise<TicketRecord> {
+  const body: { reason: string; sprint_id?: string } = { reason: payload.reason };
+  const sprintId = typeof payload.sprint_id === 'string' ? payload.sprint_id.trim() : '';
+  if (sprintId) {
+    body.sprint_id = sprintId;
+  }
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/reopen`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+  });
+  return parseResponse<TicketRecord>(response);
+}
+
 export async function deleteTicketRequest(ticketId: string, password: string): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/delete`, {
     method: 'POST',
@@ -1107,6 +1188,8 @@ export type TicketApprovalNotificationRecord = {
   ticket_id: string;
   ticket_reference: string | null;
   ticket_title: string;
+  ticket_status: TicketStatus;
+  approval_request_status: string | null;
   requested_by_name: string | null;
   requested_at: string;
   is_read: boolean;
@@ -1158,6 +1241,14 @@ export async function deleteApprovalNotificationRequest(notificationId: string):
   return parseResponse<void>(response);
 }
 
+export async function deleteAllApprovalNotificationsRequest(): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/tickets/notifications/approval/all`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
+}
+
 export type SprintRecord = {
   id: string;
   title: string;
@@ -1199,6 +1290,9 @@ export type SprintTicketBrief = {
   status: string;
   priority: string;
   assignee_names: string[];
+  carried_from_sprint_id: string | null;
+  carried_from_sprint_title: string | null;
+  carryover_count: number;
 };
 
 export type SprintActiveMember = {

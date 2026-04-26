@@ -71,8 +71,8 @@ export function CalendarEventsTable({
       <div className="user-table-shell">
         <div className="user-table-toolbar">
           <div>
-            <h2 style={{ margin: 0, fontSize: '15px' }}>All activities</h2>
-            <p style={{ margin: '4px 0 0', color: '#62749a', fontSize: '12px' }}>
+            <h2 className="module-toolbar-title">All activities</h2>
+            <p className="module-toolbar-subtext">
               Tabular list of project events. Use <strong>Calendar</strong> in the sidebar to see the month grid, activity
               chips, and full details in the side panel.
             </p>
@@ -101,7 +101,7 @@ export function CalendarEventsTable({
             header="Title"
             sortable
             style={{ minWidth: '160px' }}
-            body={(row: CalendarEventRecord) => <strong style={{ color: '#233a65' }}>{row.title}</strong>}
+            body={(row: CalendarEventRecord) => <strong className="calendar-event-title-cell">{row.title}</strong>}
           />
           <Column
             field="project_name"

@@ -149,6 +149,11 @@ def sprint_analytics(sprint_id: UUID, db: Session = Depends(get_db), user: User 
 
     brief_list: list[SprintTicketBrief] = []
     member_by_id: dict[UUID, str] = {}
+    carried_from_ids = {t.carried_from_sprint_id for t in tickets if t.carried_from_sprint_id}
+    carried_from_title_by_id: dict[UUID, str] = {}
+    if carried_from_ids:
+        carried_from_sprints = db.execute(select(Sprint).where(Sprint.id.in_(carried_from_ids))).scalars().all()
+        carried_from_title_by_id = {s.id: s.title for s in carried_from_sprints}
     for t in tickets:
         st = t.status.value if hasattr(t.status, "value") else str(t.status)
         pr = t.priority.value if hasattr(t.priority, "value") else str(t.priority)
@@ -161,6 +166,9 @@ def sprint_analytics(sprint_id: UUID, db: Session = Depends(get_db), user: User 
                 status=st,
                 priority=pr,
                 assignee_names=names,
+                carried_from_sprint_id=t.carried_from_sprint_id,
+                carried_from_sprint_title=carried_from_title_by_id.get(t.carried_from_sprint_id) if t.carried_from_sprint_id else None,
+                carryover_count=int(t.carryover_count or 0),
             )
         )
         for aid in t.assignee_ids or []:

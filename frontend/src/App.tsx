@@ -27,9 +27,11 @@ import {
   getTicketsRequest,
   getUsersRequest,
   patchTicketStatusRequest,
+  reopenTicketRequest,
   acknowledgeTicketApprovalRequest,
   markApprovalNotificationReadRequest,
   deleteApprovalNotificationRequest,
+  deleteAllApprovalNotificationsRequest,
   updateTicketRequest,
   loginRequest,
   type CustomerContact,
@@ -42,6 +44,7 @@ import {
   type TicketCreatePayload,
   type TicketRecord,
   type TicketStatus,
+  type TicketReopenPayload,
   type TicketUpdatePayload,
   updateCustomerRequest,
   updateCurrentUserPasswordRequest,
@@ -276,6 +279,8 @@ function App() {
   const [notificationBusyId, setNotificationBusyId] = useState<string | null>(null); // request id
   const [notificationReadBusyId, setNotificationReadBusyId] = useState<string | null>(null); // notification id
   const [notificationDeleteBusyId, setNotificationDeleteBusyId] = useState<string | null>(null); // notification id
+  const [notificationDeleteAllBusy, setNotificationDeleteAllBusy] = useState(false);
+  const [focusedTicketIdFromNotification, setFocusedTicketIdFromNotification] = useState<string | null>(null);
 
   const topNav = roleTopNav[role];
   const selectedPage = useMemo(
@@ -641,19 +646,28 @@ function App() {
   }, [isAuthenticated, role]);
 
   const handleAcknowledgeApprovalFromHeader = useCallback(
-    async (requestId: string) => {
+    async (requestId: string, ticketId: string) => {
       setNotificationBusyId(requestId);
       try {
         await acknowledgeTicketApprovalRequest(requestId);
+        setActivePage('tickets');
+        setActiveModule('Tickets');
+        setFocusedTicketIdFromNotification(ticketId);
         await loadPendingApprovalNotifications();
-        if (selectedPage.id === 'tickets') {
-          await loadTicketsForLead();
-        }
+        await loadTicketsForLead();
+        // Defer clearing so TicketManagementSection can open after paint. In React
+        // StrictMode (dev), effects run twice; clearing synchronously in the child
+        // would drop focusTicketId before the remount and the detail pane never opens.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setFocusedTicketIdFromNotification(null);
+          });
+        });
       } finally {
         setNotificationBusyId(null);
       }
     },
-    [loadPendingApprovalNotifications, selectedPage.id],
+    [loadPendingApprovalNotifications],
   );
 
   const handleMarkNotificationRead = useCallback(
@@ -682,6 +696,22 @@ function App() {
     [loadPendingApprovalNotifications],
   );
 
+  const handleDeleteAllNotifications = useCallback(async () => {
+    if (pendingApprovalNotifications.length === 0) {
+      return;
+    }
+    if (!window.confirm('Remove every item from your approvals inbox?')) {
+      return;
+    }
+    setNotificationDeleteAllBusy(true);
+    try {
+      await deleteAllApprovalNotificationsRequest();
+      await loadPendingApprovalNotifications();
+    } finally {
+      setNotificationDeleteAllBusy(false);
+    }
+  }, [loadPendingApprovalNotifications, pendingApprovalNotifications.length]);
+
   useEffect(() => {
     if (!isAuthenticated || role !== 'teamLead') {
       setPendingApprovalNotifications([]);
@@ -704,6 +734,10 @@ function App() {
 
   const handleLeadPatchTicketStatus = useCallback(async (id: string, status: TicketStatus, comment?: string | null) => {
     return patchTicketStatusRequest(id, status, comment);
+  }, []);
+
+  const handleLeadReopenTicket = useCallback(async (id: string, payload: TicketReopenPayload) => {
+    return reopenTicketRequest(id, payload);
   }, []);
 
   const handleLeadDeleteTicket = useCallback(async (id: string, password: string) => {
@@ -1355,11 +1389,13 @@ function App() {
         onCreateTicket={handleLeadCreateTicket}
         onUpdateTicket={handleLeadUpdateTicket}
         onPatchStatus={handleLeadPatchTicketStatus}
+        onReopenTicket={handleLeadReopenTicket}
         ticketRole={isLead ? 'lead' : 'member'}
         canCreateTickets={isLeadCreateModule}
         canEditTickets={isLead || role === 'teamMember'}
         canDeleteTickets={isLead}
         onDeleteTicket={handleLeadDeleteTicket}
+        focusTicketId={focusedTicketIdFromNotification}
       />
     );
   }
@@ -1533,8 +1569,12 @@ function App() {
               notificationBusyId={notificationBusyId}
               notificationReadBusyId={notificationReadBusyId}
               notificationDeleteBusyId={notificationDeleteBusyId}
-              onAcknowledgeNotification={(requestId) => {
-                void handleAcknowledgeApprovalFromHeader(requestId);
+              notificationDeleteAllBusy={notificationDeleteAllBusy}
+              onDeleteAllNotifications={() => {
+                void handleDeleteAllNotifications();
+              }}
+              onAcknowledgeNotification={(requestId, ticketId) => {
+                void handleAcknowledgeApprovalFromHeader(requestId, ticketId);
               }}
               onMarkNotificationRead={(notificationId) => {
                 void handleMarkNotificationRead(notificationId);

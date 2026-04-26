@@ -134,6 +134,18 @@ function ticketPaletteKey(value: string): string {
   return value.toLowerCase().replace(/\s+/g, '_');
 }
 
+function carryoverLabel(row: {
+  carried_from_sprint_title?: string | null;
+  carryover_count?: number;
+}): string {
+  const source = row.carried_from_sprint_title?.trim();
+  const count = Math.max(0, Number(row.carryover_count ?? 0));
+  if (!source || count <= 0) {
+    return 'No';
+  }
+  return count > 1 ? `From ${source} (${count}x)` : `From ${source}`;
+}
+
 const SPRINT_CHART_PALETTE = [
   '#7c9ee6',
   '#9a8fe0',
@@ -145,45 +157,58 @@ const SPRINT_CHART_PALETTE = [
   '#e59aa8',
 ];
 
-const sprintDoughnutOptions = {
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      position: 'bottom' as const,
-      labels: {
-        font: { size: 11 },
-        padding: 10,
-        usePointStyle: true,
-        boxWidth: 9,
-        boxHeight: 9,
-        color: '#54627a',
+function isDarkOrMidnightTheme(): boolean {
+  if (typeof document === 'undefined') {
+    return false;
+  }
+  const theme = document.documentElement.getAttribute('data-app-theme');
+  return theme === 'dark' || theme === 'midnight';
+}
+
+function getSprintDoughnutOptions(isDarkTheme: boolean) {
+  return {
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'bottom' as const,
+        labels: {
+          font: { size: 11 },
+          padding: 10,
+          usePointStyle: true,
+          boxWidth: 9,
+          boxHeight: 9,
+          color: isDarkTheme ? '#b7c8ea' : '#54627a',
+        },
+      },
+      tooltip: { displayColors: false },
+    },
+    cutout: '58%',
+  };
+}
+
+function getSprintBarOptions(isDarkTheme: boolean) {
+  return {
+    indexAxis: 'y' as const,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: { enabled: true, displayColors: false },
+    },
+    scales: {
+      x: {
+        beginAtZero: true,
+        ticks: { stepSize: 1, precision: 0, color: isDarkTheme ? '#b7c8ea' : '#54627a' },
+        grid: { color: isDarkTheme ? '#31405f' : '#eef2f7' },
+        border: { display: false },
+      },
+      y: {
+        ticks: { color: isDarkTheme ? '#d7e4ff' : '#334155' },
+        grid: { display: false },
+        border: { display: false },
       },
     },
-    tooltip: { displayColors: false },
-  },
-  cutout: '58%',
-};
-
-const sprintBarOptions = {
-  indexAxis: 'y' as const,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { display: false },
-    tooltip: { enabled: true, displayColors: false },
-  },
-  scales: {
-    x: {
-      beginAtZero: true,
-      ticks: { stepSize: 1, precision: 0 },
-      grid: { color: '#eef2f7' },
-      border: { display: false },
-    },
-    y: {
-      grid: { display: false },
-      border: { display: false },
-    },
-  },
-};
+  };
+}
 
 const sprintModalStagger = {
   hidden: { opacity: 0 },
@@ -230,6 +255,9 @@ export function SprintsWorkspace({ viewKey, activeModule, role }: SprintsWorkspa
 
 function SprintsMemberView({ viewKey }: { viewKey: string }) {
   const reduceMotion = useReducedMotion();
+  const isDarkTheme = isDarkOrMidnightTheme();
+  const sprintDoughnutOptions = useMemo(() => getSprintDoughnutOptions(isDarkTheme), [isDarkTheme]);
+  const sprintBarOptions = useMemo(() => getSprintBarOptions(isDarkTheme), [isDarkTheme]);
   const [sprints, setSprints] = useState<SprintRecord[]>([]);
   const [tickets, setTickets] = useState<TicketRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -653,6 +681,17 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
                       />
                     )}
                     style={{ width: '140px' }}
+                  />
+                  <Column
+                    header="Carryover"
+                    style={{ width: '190px' }}
+                    body={(row: { carried_from_sprint_title?: string | null; carryover_count?: number }) =>
+                      row.carryover_count ? (
+                        <Tag value={carryoverLabel(row)} severity="warning" className="sprints-carryover-tag" />
+                      ) : (
+                        <span className="sprints-muted">—</span>
+                      )
+                    }
                   />
                 </DataTable>
               </div>
@@ -1607,6 +1646,9 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
 }
 
 function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boolean }) {
+  const isDarkTheme = isDarkOrMidnightTheme();
+  const sprintDoughnutOptions = useMemo(() => getSprintDoughnutOptions(isDarkTheme), [isDarkTheme]);
+  const sprintBarOptions = useMemo(() => getSprintBarOptions(isDarkTheme), [isDarkTheme]);
   const [sprints, setSprints] = useState<SprintRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dashboardOpen, setDashboardOpen] = useState(false);
@@ -2060,6 +2102,17 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
                               />
                             );
                           }}
+                        />
+                        <Column
+                          header="Carryover"
+                          style={{ width: '190px' }}
+                          body={(row) =>
+                            row.carryover_count ? (
+                              <Tag value={carryoverLabel(row)} severity="warning" className="sprints-carryover-tag" />
+                            ) : (
+                              <span className="sprints-muted">—</span>
+                            )
+                          }
                         />
                         <Column
                           header="Assignees"

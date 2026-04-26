@@ -33,6 +33,20 @@ body {
   --text-main: #e4ebfb;
   --text-muted: #9cb0d8;
   --primary-color: #7b73e8;
+  --table-shell-bg: #171e2c;
+  --table-shell-border: #2a3650;
+  --table-head-bg: #222d42;
+  --table-head-border: #334260;
+  --table-body-border: #2b3851;
+  --table-row-bg: #1a2333;
+  --table-row-hover-bg: #233047;
+  --table-row-alt-bg: #182131;
+  --table-row-alt-hover-bg: #202c42;
+  --table-row-success-bg: #153226;
+  --table-row-success-hover-bg: #1a3e2e;
+  --table-row-warning-bg: #3a2f16;
+  --table-row-warning-hover-bg: #493b1a;
+  --table-row-selected-bg: #2e4d87;
 }
 
 :root[data-app-theme='midnight'] {
@@ -43,6 +57,20 @@ body {
   --text-main: #dde8ff;
   --text-muted: #8a9ec8;
   --primary-color: #6c63d4;
+  --table-shell-bg: #0f1630;
+  --table-shell-border: #22325f;
+  --table-head-bg: #1a2750;
+  --table-head-border: #2a3b70;
+  --table-body-border: #21325f;
+  --table-row-bg: #101937;
+  --table-row-hover-bg: #1a2a56;
+  --table-row-alt-bg: #0e1732;
+  --table-row-alt-hover-bg: #15224a;
+  --table-row-success-bg: #113427;
+  --table-row-success-hover-bg: #184331;
+  --table-row-warning-bg: #3b2f12;
+  --table-row-warning-hover-bg: #4b3c17;
+  --table-row-selected-bg: #31549a;
 }
 
 :root[data-app-theme='dark'],
@@ -148,6 +176,16 @@ body {
   color: var(--text-muted) !important;
 }
 
+:root[data-app-theme='dark'] .module-toolbar-title,
+:root[data-app-theme='midnight'] .module-toolbar-title {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .module-toolbar-subtext,
+:root[data-app-theme='midnight'] .module-toolbar-subtext {
+  color: var(--text-muted) !important;
+}
+
 /* Background Gradients Override */
 :root[data-app-theme='dark'] .app-root, :root[data-app-theme='midnight'] .app-root,
 :root[data-app-theme='dark'] .dashboard-shell, :root[data-app-theme='midnight'] .dashboard-shell {
@@ -224,6 +262,418 @@ body {
 :root[data-app-theme='dark'] .p-dropdown-panel .p-dropdown-items .p-dropdown-item:not(.p-highlight):hover,
 :root[data-app-theme='midnight'] .p-dropdown-panel .p-dropdown-items .p-dropdown-item:not(.p-highlight):hover {
   background: var(--bg-surface-hover) !important;
+}
+
+/* Data table refinements for dark and midnight only */
+:root[data-app-theme='dark'] .table-search,
+:root[data-app-theme='midnight'] .table-search {
+  background: var(--table-row-alt-bg) !important;
+  border-color: var(--table-head-border) !important;
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.p-datatable > .p-datatable-wrapper,
+:root[data-app-theme='midnight'] .user-table.p-datatable > .p-datatable-wrapper,
+:root[data-app-theme='dark'] .user-table.p-datatable > .p-paginator-bottom,
+:root[data-app-theme='midnight'] .user-table.p-datatable > .p-paginator-bottom {
+  background: var(--table-shell-bg) !important;
+  border-color: var(--table-shell-border) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.p-datatable .p-datatable-thead > tr > th,
+:root[data-app-theme='midnight'] .user-table.p-datatable .p-datatable-thead > tr > th {
+  background: var(--table-head-bg) !important;
+  color: var(--text-main) !important;
+  border-right-color: var(--table-head-border) !important;
+  border-bottom-color: var(--table-head-border) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.p-datatable .p-datatable-tbody > tr,
+:root[data-app-theme='midnight'] .user-table.p-datatable .p-datatable-tbody > tr {
+  background: var(--table-row-bg) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.p-datatable .p-datatable-tbody > tr > td,
+:root[data-app-theme='midnight'] .user-table.p-datatable .p-datatable-tbody > tr > td {
+  color: var(--text-main) !important;
+  border-right-color: var(--table-body-border) !important;
+  border-bottom-color: var(--table-body-border) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.p-datatable .p-datatable-tbody > tr:hover,
+:root[data-app-theme='dark'] .user-table .clickable-row:hover,
+:root[data-app-theme='midnight'] .user-table.p-datatable .p-datatable-tbody > tr:hover,
+:root[data-app-theme='midnight'] .user-table .clickable-row:hover {
+  background: var(--table-row-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .user-name-cell strong,
+:root[data-app-theme='dark'] .tickets-project-cell,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact .tickets-title-cell,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact .tickets-description-cell,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact .tickets-assignee-cell,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact .tickets-date-cell,
+:root[data-app-theme='midnight'] .user-name-cell strong,
+:root[data-app-theme='midnight'] .tickets-project-cell,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact .tickets-title-cell,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact .tickets-description-cell,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact .tickets-assignee-cell,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact .tickets-date-cell {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-table-shell,
+:root[data-app-theme='midnight'] .kb-documents-table-shell {
+  background: var(--table-shell-bg) !important;
+  border-color: var(--table-shell-border) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-table.p-datatable .p-datatable-thead > tr > th,
+:root[data-app-theme='midnight'] .kb-documents-table.p-datatable .p-datatable-thead > tr > th {
+  background: var(--table-head-bg) !important;
+  color: var(--text-main) !important;
+  border-bottom-color: var(--table-head-border) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-table.p-datatable .p-datatable-tbody > tr.p-row-odd,
+:root[data-app-theme='midnight'] .kb-documents-table.p-datatable .p-datatable-tbody > tr.p-row-odd {
+  background: var(--table-row-alt-bg) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-table.p-datatable .p-datatable-tbody > tr:hover,
+:root[data-app-theme='midnight'] .kb-documents-table.p-datatable .p-datatable-tbody > tr:hover {
+  background: var(--table-row-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-table.p-datatable .p-datatable-tbody > tr.p-row-odd:hover,
+:root[data-app-theme='midnight'] .kb-documents-table.p-datatable .p-datatable-tbody > tr.p-row-odd:hover {
+  background: var(--table-row-alt-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-table.p-datatable .p-datatable-tbody > tr > td,
+:root[data-app-theme='midnight'] .kb-documents-table.p-datatable .p-datatable-tbody > tr > td {
+  border-color: var(--table-body-border) !important;
+}
+
+/* Module surfaces and copy rhythm for dark/midnight */
+:root[data-app-theme='dark'] .calendar-workspace-split,
+:root[data-app-theme='midnight'] .calendar-workspace-split,
+:root[data-app-theme='dark'] .calendar-detail-panel,
+:root[data-app-theme='midnight'] .calendar-detail-panel,
+:root[data-app-theme='dark'] .calendar-event-card,
+:root[data-app-theme='midnight'] .calendar-event-card,
+:root[data-app-theme='dark'] .calendar-milestones-section,
+:root[data-app-theme='midnight'] .calendar-milestones-section,
+:root[data-app-theme='dark'] .calendar-event-report-row,
+:root[data-app-theme='midnight'] .calendar-event-report-row,
+:root[data-app-theme='dark'] .sprints-member-hero,
+:root[data-app-theme='midnight'] .sprints-member-hero,
+:root[data-app-theme='dark'] .sprints-ticket-list,
+:root[data-app-theme='midnight'] .sprints-ticket-list,
+:root[data-app-theme='dark'] .sprints-ticket-chip,
+:root[data-app-theme='midnight'] .sprints-ticket-chip,
+:root[data-app-theme='dark'] .sprints-member-ticket-row,
+:root[data-app-theme='midnight'] .sprints-member-ticket-row,
+:root[data-app-theme='dark'] .sprints-member-kpi-card,
+:root[data-app-theme='midnight'] .sprints-member-kpi-card,
+:root[data-app-theme='dark'] .sprints-member-ticket-detail-item,
+:root[data-app-theme='midnight'] .sprints-member-ticket-detail-item,
+:root[data-app-theme='dark'] .sprints-kpi,
+:root[data-app-theme='midnight'] .sprints-kpi,
+:root[data-app-theme='dark'] .sprints-status-cell,
+:root[data-app-theme='midnight'] .sprints-status-cell,
+:root[data-app-theme='dark'] .sprints-wizard-launch,
+:root[data-app-theme='midnight'] .sprints-wizard-launch,
+:root[data-app-theme='dark'] .sprints-wizard,
+:root[data-app-theme='midnight'] .sprints-wizard,
+:root[data-app-theme='dark'] .sprints-preview-card,
+:root[data-app-theme='midnight'] .sprints-preview-card,
+:root[data-app-theme='dark'] .sprints-preview-ticket-list li,
+:root[data-app-theme='midnight'] .sprints-preview-ticket-list li,
+:root[data-app-theme='dark'] .sprints-ticket-actions,
+:root[data-app-theme='midnight'] .sprints-ticket-actions,
+:root[data-app-theme='dark'] .sprints-monitoring-sprints-table-shell,
+:root[data-app-theme='midnight'] .sprints-monitoring-sprints-table-shell,
+:root[data-app-theme='dark'] .sprints-monitoring-sidebar,
+:root[data-app-theme='midnight'] .sprints-monitoring-sidebar,
+:root[data-app-theme='dark'] .sprints-monitoring-toolbar,
+:root[data-app-theme='midnight'] .sprints-monitoring-toolbar,
+:root[data-app-theme='dark'] .sprints-analytics--panel,
+:root[data-app-theme='midnight'] .sprints-analytics--panel,
+:root[data-app-theme='dark'] .sprints-monitoring-members,
+:root[data-app-theme='midnight'] .sprints-monitoring-members,
+:root[data-app-theme='dark'] .sprints-monitoring-member-chip,
+:root[data-app-theme='midnight'] .sprints-monitoring-member-chip,
+:root[data-app-theme='dark'] .sprints-monitoring-table-shell,
+:root[data-app-theme='midnight'] .sprints-monitoring-table-shell,
+:root[data-app-theme='dark'] .sprints-chart-card,
+:root[data-app-theme='midnight'] .sprints-chart-card,
+:root[data-app-theme='dark'] .sprints-monitoring-pick,
+:root[data-app-theme='midnight'] .sprints-monitoring-pick,
+:root[data-app-theme='dark'] .tickets-detail-body,
+:root[data-app-theme='midnight'] .tickets-detail-body,
+:root[data-app-theme='dark'] .ticket-detail-sidebar,
+:root[data-app-theme='midnight'] .ticket-detail-sidebar,
+:root[data-app-theme='dark'] .ticket-detail-main,
+:root[data-app-theme='midnight'] .ticket-detail-main,
+:root[data-app-theme='dark'] .ticket-detail-approval-bar,
+:root[data-app-theme='midnight'] .ticket-detail-approval-bar,
+:root[data-app-theme='dark'] .ticket-conv-thread--chat,
+:root[data-app-theme='midnight'] .ticket-conv-thread--chat,
+:root[data-app-theme='dark'] .ticket-chat-bubble,
+:root[data-app-theme='midnight'] .ticket-chat-bubble,
+:root[data-app-theme='dark'] .ticket-chat-media-card,
+:root[data-app-theme='midnight'] .ticket-chat-media-card,
+:root[data-app-theme='dark'] .ticket-conv-bubble,
+:root[data-app-theme='midnight'] .ticket-conv-bubble,
+:root[data-app-theme='dark'] .ticket-conv-reply--chat,
+:root[data-app-theme='midnight'] .ticket-conv-reply--chat,
+:root[data-app-theme='dark'] .ticket-attachments-list,
+:root[data-app-theme='midnight'] .ticket-attachments-list,
+:root[data-app-theme='dark'] .ticket-attachments-empty,
+:root[data-app-theme='midnight'] .ticket-attachments-empty,
+:root[data-app-theme='dark'] .ticket-timeline-content,
+:root[data-app-theme='midnight'] .ticket-timeline-content,
+:root[data-app-theme='dark'] .ticket-detail-readonly,
+:root[data-app-theme='midnight'] .ticket-detail-readonly {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-monitoring-dashboard-dialog .p-dialog-content,
+:root[data-app-theme='dark'] .sprints-monitoring-dashboard-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .sprints-monitoring-dashboard-dialog .p-dialog-content,
+:root[data-app-theme='midnight'] .sprints-monitoring-dashboard-dialog .p-dialog-header {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-day,
+:root[data-app-theme='midnight'] .calendar-day {
+  background: var(--table-row-bg) !important;
+  border-color: var(--table-body-border) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-day:hover,
+:root[data-app-theme='midnight'] .calendar-day:hover {
+  background: var(--table-row-hover-bg) !important;
+  border-color: var(--table-head-border) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-day-muted,
+:root[data-app-theme='midnight'] .calendar-day-muted {
+  background: var(--table-row-alt-bg) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-day-selected,
+:root[data-app-theme='midnight'] .calendar-day-selected {
+  background: color-mix(in srgb, var(--table-row-selected-bg) 45%, var(--table-row-bg) 55%) !important;
+  border-color: var(--table-row-selected-bg) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-day-today,
+:root[data-app-theme='midnight'] .calendar-day-today {
+  background: color-mix(in srgb, var(--table-row-selected-bg) 22%, var(--table-row-bg) 78%) !important;
+  border-color: color-mix(in srgb, var(--table-row-selected-bg) 78%, #ffffff 22%) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--table-row-selected-bg) 72%, #ffffff 28%) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-day-chip,
+:root[data-app-theme='midnight'] .calendar-day-chip {
+  background: var(--table-row-alt-bg) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-day-chip:hover,
+:root[data-app-theme='midnight'] .calendar-day-chip:hover {
+  background: var(--table-row-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-detail-panel-head,
+:root[data-app-theme='midnight'] .calendar-detail-panel-head,
+:root[data-app-theme='dark'] .calendar-detail,
+:root[data-app-theme='midnight'] .calendar-detail,
+:root[data-app-theme='dark'] .calendar-event-reports,
+:root[data-app-theme='midnight'] .calendar-event-reports {
+  border-color: var(--table-body-border) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-chat-bubble--mine,
+:root[data-app-theme='midnight'] .ticket-chat-bubble--mine,
+:root[data-app-theme='dark'] .sprints-monitoring-pick--selected,
+:root[data-app-theme='midnight'] .sprints-monitoring-pick--selected {
+  background: color-mix(in srgb, var(--table-row-selected-bg) 34%, var(--bg-surface) 66%) !important;
+  border-color: var(--table-row-selected-bg) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-chat-bubble--internal,
+:root[data-app-theme='midnight'] .ticket-chat-bubble--internal,
+:root[data-app-theme='dark'] .ticket-conv-bubble--internal,
+:root[data-app-theme='midnight'] .ticket-conv-bubble--internal {
+  background: color-mix(in srgb, var(--table-row-warning-bg) 44%, var(--bg-surface) 56%) !important;
+  border-color: color-mix(in srgb, var(--table-row-warning-bg) 70%, #ffffff 30%) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-monitoring-table.p-datatable .p-datatable-thead > tr > th,
+:root[data-app-theme='dark'] .sprints-monitoring-sprints-table.p-datatable .p-datatable-thead > tr > th,
+:root[data-app-theme='midnight'] .sprints-monitoring-table.p-datatable .p-datatable-thead > tr > th,
+:root[data-app-theme='midnight'] .sprints-monitoring-sprints-table.p-datatable .p-datatable-thead > tr > th {
+  background: var(--table-head-bg) !important;
+  color: var(--text-main) !important;
+  border-bottom-color: var(--table-head-border) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-monitoring-table.p-datatable .p-datatable-tbody > tr > td,
+:root[data-app-theme='dark'] .sprints-monitoring-sprints-table.p-datatable .p-datatable-tbody > tr > td,
+:root[data-app-theme='midnight'] .sprints-monitoring-table.p-datatable .p-datatable-tbody > tr > td,
+:root[data-app-theme='midnight'] .sprints-monitoring-sprints-table.p-datatable .p-datatable-tbody > tr > td {
+  border-color: var(--table-body-border) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-monitoring-table.p-datatable .p-datatable-tbody > tr:hover,
+:root[data-app-theme='midnight'] .sprints-monitoring-table.p-datatable .p-datatable-tbody > tr:hover {
+  background: var(--table-row-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-monitoring-table.p-datatable .p-datatable-tbody > tr.sprints-ticket-row--closed > td,
+:root[data-app-theme='midnight'] .sprints-monitoring-table.p-datatable .p-datatable-tbody > tr.sprints-ticket-row--closed > td {
+  background: var(--table-row-success-bg) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-monitoring-table.p-datatable .p-datatable-tbody > tr.sprints-ticket-row--closed:hover > td,
+:root[data-app-theme='midnight'] .sprints-monitoring-table.p-datatable .p-datatable-tbody > tr.sprints-ticket-row--closed:hover > td {
+  background: var(--table-row-success-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-conv-editor .ql-toolbar.ql-snow,
+:root[data-app-theme='dark'] .ticket-conv-editor .ql-container.ql-snow,
+:root[data-app-theme='dark'] .ticket-rich-editor .ql-toolbar.ql-snow,
+:root[data-app-theme='dark'] .ticket-rich-editor .ql-container.ql-snow,
+:root[data-app-theme='midnight'] .ticket-conv-editor .ql-toolbar.ql-snow,
+:root[data-app-theme='midnight'] .ticket-conv-editor .ql-container.ql-snow,
+:root[data-app-theme='midnight'] .ticket-rich-editor .ql-toolbar.ql-snow,
+:root[data-app-theme='midnight'] .ticket-rich-editor .ql-container.ql-snow {
+  background: var(--bg-surface-hover) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-conv-editor .ql-editor,
+:root[data-app-theme='dark'] .ticket-rich-editor .ql-editor,
+:root[data-app-theme='midnight'] .ticket-conv-editor .ql-editor,
+:root[data-app-theme='midnight'] .ticket-rich-editor .ql-editor {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-kicker,
+:root[data-app-theme='dark'] .calendar-sub,
+:root[data-app-theme='dark'] .calendar-detail-panel-title,
+:root[data-app-theme='dark'] .calendar-detail-panel-hint,
+:root[data-app-theme='dark'] .calendar-weekday,
+:root[data-app-theme='dark'] .calendar-day-more,
+:root[data-app-theme='dark'] .calendar-event-time,
+:root[data-app-theme='dark'] .calendar-event-desc,
+:root[data-app-theme='dark'] .calendar-event-progress-label,
+:root[data-app-theme='dark'] .calendar-ms-row,
+:root[data-app-theme='dark'] .calendar-ms-date,
+:root[data-app-theme='dark'] .sprints-muted,
+:root[data-app-theme='dark'] .sprints-field label,
+:root[data-app-theme='dark'] .sprints-picker-row label,
+:root[data-app-theme='dark'] .sprints-member-count,
+:root[data-app-theme='dark'] .sprints-chart-card-hint,
+:root[data-app-theme='dark'] .sprints-monitoring-sidebar-title,
+:root[data-app-theme='dark'] .sprints-monitoring-sidebar-hint,
+:root[data-app-theme='dark'] .sprints-monitoring-pick-dates,
+:root[data-app-theme='dark'] .sprints-monitoring-hero-meta,
+:root[data-app-theme='dark'] .sprints-monitoring-section-sub,
+:root[data-app-theme='dark'] .ticket-form-label,
+:root[data-app-theme='dark'] .ticket-form-hint,
+:root[data-app-theme='dark'] .ticket-detail-muted,
+:root[data-app-theme='dark'] .ticket-chat-time,
+:root[data-app-theme='dark'] .ticket-conv-time,
+:root[data-app-theme='dark'] .ticket-attachment-meta,
+:root[data-app-theme='dark'] .ticket-readonly-dl dt,
+:root[data-app-theme='midnight'] .calendar-kicker,
+:root[data-app-theme='midnight'] .calendar-sub,
+:root[data-app-theme='midnight'] .calendar-detail-panel-title,
+:root[data-app-theme='midnight'] .calendar-detail-panel-hint,
+:root[data-app-theme='midnight'] .calendar-weekday,
+:root[data-app-theme='midnight'] .calendar-day-more,
+:root[data-app-theme='midnight'] .calendar-event-time,
+:root[data-app-theme='midnight'] .calendar-event-desc,
+:root[data-app-theme='midnight'] .calendar-event-progress-label,
+:root[data-app-theme='midnight'] .calendar-ms-row,
+:root[data-app-theme='midnight'] .calendar-ms-date,
+:root[data-app-theme='midnight'] .sprints-muted,
+:root[data-app-theme='midnight'] .sprints-field label,
+:root[data-app-theme='midnight'] .sprints-picker-row label,
+:root[data-app-theme='midnight'] .sprints-member-count,
+:root[data-app-theme='midnight'] .sprints-chart-card-hint,
+:root[data-app-theme='midnight'] .sprints-monitoring-sidebar-title,
+:root[data-app-theme='midnight'] .sprints-monitoring-sidebar-hint,
+:root[data-app-theme='midnight'] .sprints-monitoring-pick-dates,
+:root[data-app-theme='midnight'] .sprints-monitoring-hero-meta,
+:root[data-app-theme='midnight'] .sprints-monitoring-section-sub,
+:root[data-app-theme='midnight'] .ticket-form-label,
+:root[data-app-theme='midnight'] .ticket-form-hint,
+:root[data-app-theme='midnight'] .ticket-detail-muted,
+:root[data-app-theme='midnight'] .ticket-chat-time,
+:root[data-app-theme='midnight'] .ticket-conv-time,
+:root[data-app-theme='midnight'] .ticket-attachment-meta,
+:root[data-app-theme='midnight'] .ticket-readonly-dl dt {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-title,
+:root[data-app-theme='dark'] .calendar-month-label,
+:root[data-app-theme='dark'] .calendar-detail-panel-date,
+:root[data-app-theme='dark'] .calendar-event-title,
+:root[data-app-theme='dark'] .calendar-event-title-cell,
+:root[data-app-theme='dark'] .sprints-section-title,
+:root[data-app-theme='dark'] .sprints-dnd-title,
+:root[data-app-theme='dark'] .sprints-member-sprint-title,
+:root[data-app-theme='dark'] .sprints-member-ticket-title,
+:root[data-app-theme='dark'] .sprints-monitoring-dashboard-title,
+:root[data-app-theme='dark'] .sprints-chart-card-title,
+:root[data-app-theme='dark'] .sprints-monitoring-pick-title,
+:root[data-app-theme='dark'] .sprints-monitoring-section-title,
+:root[data-app-theme='dark'] .sprints-monitoring-hero-title,
+:root[data-app-theme='dark'] .sprints-preview-dl dd,
+:root[data-app-theme='dark'] .ticket-chat-author,
+:root[data-app-theme='dark'] .ticket-chat-body,
+:root[data-app-theme='dark'] .ticket-conv-author,
+:root[data-app-theme='dark'] .ticket-conv-body,
+:root[data-app-theme='dark'] .ticket-attachment-link,
+:root[data-app-theme='dark'] .ticket-timeline-head strong,
+:root[data-app-theme='dark'] .ticket-timeline-subtitle,
+:root[data-app-theme='dark'] .ticket-readonly-dl dd,
+:root[data-app-theme='midnight'] .calendar-title,
+:root[data-app-theme='midnight'] .calendar-month-label,
+:root[data-app-theme='midnight'] .calendar-detail-panel-date,
+:root[data-app-theme='midnight'] .calendar-event-title,
+:root[data-app-theme='midnight'] .calendar-event-title-cell,
+:root[data-app-theme='midnight'] .sprints-section-title,
+:root[data-app-theme='midnight'] .sprints-dnd-title,
+:root[data-app-theme='midnight'] .sprints-member-sprint-title,
+:root[data-app-theme='midnight'] .sprints-member-ticket-title,
+:root[data-app-theme='midnight'] .sprints-monitoring-dashboard-title,
+:root[data-app-theme='midnight'] .sprints-chart-card-title,
+:root[data-app-theme='midnight'] .sprints-monitoring-pick-title,
+:root[data-app-theme='midnight'] .sprints-monitoring-section-title,
+:root[data-app-theme='midnight'] .sprints-monitoring-hero-title,
+:root[data-app-theme='midnight'] .sprints-preview-dl dd,
+:root[data-app-theme='midnight'] .ticket-chat-author,
+:root[data-app-theme='midnight'] .ticket-chat-body,
+:root[data-app-theme='midnight'] .ticket-conv-author,
+:root[data-app-theme='midnight'] .ticket-conv-body,
+:root[data-app-theme='midnight'] .ticket-attachment-link,
+:root[data-app-theme='midnight'] .ticket-timeline-head strong,
+:root[data-app-theme='midnight'] .ticket-timeline-subtitle,
+:root[data-app-theme='midnight'] .ticket-readonly-dl dd {
+  color: var(--text-main) !important;
 }
 
 /* Cards & Panels */
@@ -582,6 +1032,12 @@ body {
   position: relative;
 }
 
+.header-icon-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .header-notifications {
   position: relative;
 }
@@ -636,7 +1092,425 @@ body {
 }
 
 .notification-dialog .p-dialog-content {
+  padding-top: 10px;
+}
+
+.notification-dialog .p-dialog-header {
+  border-bottom: 1px solid #e6ecf7;
+}
+
+.notification-dialog:not(.notification-dialog--inbox) .p-dialog-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* —— Approvals inbox (professional notification UI) —— */
+.notification-dialog--inbox .p-dialog-header {
+  padding: 12px 20px 10px;
+  border-bottom: 1px solid #e4eaf5;
+  background: linear-gradient(180deg, #fbfdff 0%, #f5f8ff 100%);
+}
+
+.notification-dialog--inbox .p-dialog-header-icons {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.notification-dialog-header {
+  min-width: 0;
+}
+
+.notification-dialog-heading {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #152642;
+  line-height: 1.22;
+}
+
+.notification-dialog-lede {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #5c6d92;
+  max-width: 52ch;
+}
+
+.notification-dialog-content.p-dialog-content {
+  padding: 0 0 14px !important;
+  max-height: min(78vh, 720px);
+  overflow: auto;
+}
+
+.notification-inbox {
+  padding: 0 20px;
+}
+
+.notification-inbox-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0 8px;
+  margin-bottom: 0;
+  border-bottom: 1px solid #edf1f7;
+}
+
+.notification-inbox-toolbar-label {
+  font-size: 13px;
+  color: #3d4f72;
+}
+
+.notification-inbox-toolbar-label strong {
+  font-weight: 800;
+  color: #1a2b4d;
+}
+
+.notification-inbox-toolbar-muted {
+  font-weight: 500;
+  color: #6b7b9c;
+}
+
+.notification-inbox-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.notification-inbox-clear-all {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid #e8b4b4;
+  background: linear-gradient(180deg, #fffbfb 0%, #fff5f5 100%);
+  color: #b42318;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.notification-inbox-clear-all:not(:disabled):hover {
+  background: #ffe8e8;
+  border-color: #dc9a9a;
+}
+
+.notification-inbox-clear-all:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.notification-inbox-unread-pill {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #eef2ff 0%, #e4e9ff 100%);
+  border: 1px solid #c8d4f6;
+  color: #3d4f9e;
+}
+
+.notification-inbox-all-read {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5a9270;
+}
+
+.notification-inbox-list {
+  margin: 0;
+  padding: 10px 0 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notification-inbox-card {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px 12px;
+  padding: 11px 12px 10px 10px;
+  border-radius: 12px;
+  border: 1px solid #e0e8f4;
+  background: linear-gradient(145deg, #ffffff 0%, #f8fbff 55%, #f4f7fd 100%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 6px 20px rgba(41, 67, 120, 0.06);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.notification-inbox-card:hover {
+  border-color: #cdd9ef;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.95) inset, 0 12px 36px rgba(41, 67, 120, 0.1);
+}
+
+.notification-inbox-card--unread {
+  border-left: 3px solid #5b6fe8;
+  padding-left: 8px;
+}
+
+.notification-inbox-card--read {
+  opacity: 0.96;
+}
+
+.notification-inbox-card-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, #eef2ff 0%, #e2e8ff 100%);
+  border: 1px solid #d5def8;
+  color: #4a5fc4;
+  font-size: 1rem;
+}
+
+.notification-inbox-card-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.notification-inbox-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.notification-inbox-ref {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #3d51b8;
+  background: #eef2ff;
+  border: 1px solid #d8e0fc;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.notification-inbox-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  text-transform: capitalize;
+}
+
+.notification-inbox-status--open {
+  background: #f1f4fa;
+  border-color: #dce3f0;
+  color: #4a5a78;
+}
+.notification-inbox-status--in_progress {
+  background: #e8f4ff;
+  border-color: #c5ddf5;
+  color: #1d5a9e;
+}
+.notification-inbox-status--in_review {
+  background: #fff6e8;
+  border-color: #f0dcc0;
+  color: #8a5a12;
+}
+.notification-inbox-status--resolved {
+  background: #e8f8f0;
+  border-color: #c5e8d6;
+  color: #1f6b45;
+}
+.notification-inbox-status--closed {
+  background: #edf0f5;
+  border-color: #d5dbe8;
+  color: #4a5568;
+}
+
+.notification-inbox-new-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: #5b6fe8;
+  color: #fff;
+}
+
+.notification-inbox-title {
+  margin: 1px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.32;
+  color: #14213d;
+}
+
+.notification-inbox-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 11px;
+  color: #62749a;
+  width: 100%;
+}
+
+.notification-inbox-meta-read {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.notification-inbox-doubletick {
+  color: #53bdeb;
+  flex-shrink: 0;
+}
+
+.notification-inbox-doubletick--muted {
+  color: #7a8fb8;
+  opacity: 0.85;
+}
+
+.notification-inbox-markread-icon {
+  color: #4a5f8c;
+  flex-shrink: 0;
+}
+
+.notification-inbox-meta-block {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notification-inbox-meta-block .pi {
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.notification-inbox-meta-sep {
+  opacity: 0.45;
+  user-select: none;
+}
+
+.notification-inbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
   padding-top: 8px;
+  border-top: 1px solid #e8edf6;
+}
+
+.notification-inbox-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.notification-inbox-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.notification-inbox-btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.notification-inbox-btn--secondary {
+  background: #f5f8ff;
+  border-color: #d0dbf0;
+  color: #2a3f66;
+}
+
+.notification-inbox-btn--secondary:not(:disabled):hover {
+  background: #eef3fc;
+  border-color: #c3d0ea;
+}
+
+.notification-inbox-btn--danger {
+  background: #fff8f9;
+  border-color: #f0d0d6;
+  color: #9a3545;
+}
+
+.notification-inbox-btn--danger:not(:disabled):hover {
+  background: #fff0f2;
+  border-color: #e8bcc4;
+}
+
+.notification-inbox-btn--primary {
+  margin-left: auto;
+  background: linear-gradient(180deg, #5f6fe8 0%, #4d5ed4 100%);
+  border-color: #4a56c8;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(77, 94, 212, 0.28);
+}
+
+.notification-inbox-btn--primary:not(:disabled):hover {
+  filter: brightness(1.05);
+}
+
+.notification-inbox-btn .pi {
+  font-size: 0.85rem;
+}
+
+.notification-inbox-empty {
+  text-align: center;
+  padding: 28px 20px 32px;
+}
+
+.notification-inbox-empty-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 10px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, #f0f4ff 0%, #e6ecfb 100%);
+  border: 1px solid #dce4f7;
+  color: #5a6bb8;
+  font-size: 1.35rem;
+}
+
+.notification-inbox-empty-title {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #1a2b4d;
+}
+
+.notification-inbox-empty-copy {
+  margin: 0 auto;
+  max-width: 36ch;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6b7b9c;
+}
+
+@media (max-width: 520px) {
+  .notification-inbox-actions {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+
+  .notification-inbox-btn--primary {
+    margin-left: 0;
+    width: auto;
+    max-width: 100%;
+  }
 }
 
 .settings-dialog .p-dialog-content {
@@ -1128,14 +2002,19 @@ body {
 
 .notification-list--modal .notification-item {
   align-items: center;
+  border: 1px solid #d8e2f2;
+  border-radius: 16px;
+  margin-bottom: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 10px 24px rgba(43, 66, 108, 0.08);
 }
 
 .notification-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #edf1f7;
+  gap: 10px;
+  padding: 14px;
+  border-bottom: none;
 }
 
 .notification-item--read {
@@ -1146,13 +2025,29 @@ body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 5px;
+}
+
+.notification-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.notification-item-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #5b74de;
+  box-shadow: 0 0 0 3px rgba(91, 116, 222, 0.18);
+  flex-shrink: 0;
 }
 
 .notification-item-text strong {
   display: block;
-  font-size: 12px;
-  color: #2d3a5a;
+  font-size: 15px;
+  color: #1f2f4e;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1160,8 +2055,8 @@ body {
 
 .notification-item-text span {
   display: -webkit-box;
-  font-size: 12px;
-  color: #2d3a5a;
+  font-size: 14px;
+  color: #334a72;
   line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1171,21 +2066,19 @@ body {
 
 .notification-item-text small {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   color: #6b7a99;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.4;
 }
 
 .notification-ack-btn {
-  border: 1px solid #6c63d4;
-  background: #eeedfe;
-  color: #534ab7;
+  border: 1px solid #6289ee;
+  background: linear-gradient(180deg, #edf3ff 0%, #dfeaff 100%);
+  color: #2e5ebf;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  padding: 4px 9px;
+  padding: 6px 12px;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1207,12 +2100,12 @@ body {
 .notification-read-btn,
 .notification-delete-btn {
   border: 1px solid #c5d0e6;
-  background: #f5f7fb;
+  background: #f7faff;
   color: #2d3a5a;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  padding: 4px 8px;
+  padding: 6px 10px;
   cursor: pointer;
 }
 
@@ -1230,8 +2123,8 @@ body {
 
 .notification-empty {
   margin: 0;
-  padding: 12px;
-  font-size: 12px;
+  padding: 16px;
+  font-size: 13px;
   color: #6b7a99;
 }
 
@@ -3247,6 +4140,20 @@ body {
   background: #ecfdf3 !important;
 }
 
+:root[data-app-theme='dark'] .calendar-events-table-page .user-table.calendar-events-activities-table.p-datatable .p-datatable-tbody > tr.calendar-events-row-completed,
+:root[data-app-theme='dark'] .calendar-events-table-page .user-table.calendar-events-activities-table.p-datatable .p-datatable-tbody > tr.calendar-events-row-completed > td,
+:root[data-app-theme='midnight'] .calendar-events-table-page .user-table.calendar-events-activities-table.p-datatable .p-datatable-tbody > tr.calendar-events-row-completed,
+:root[data-app-theme='midnight'] .calendar-events-table-page .user-table.calendar-events-activities-table.p-datatable .p-datatable-tbody > tr.calendar-events-row-completed > td {
+  background: var(--table-row-success-bg) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-events-table-page .user-table.calendar-events-activities-table.p-datatable .p-datatable-tbody > tr.calendar-events-row-completed:hover,
+:root[data-app-theme='dark'] .calendar-events-table-page .user-table.calendar-events-activities-table.p-datatable .p-datatable-tbody > tr.calendar-events-row-completed:hover > td,
+:root[data-app-theme='midnight'] .calendar-events-table-page .user-table.calendar-events-activities-table.p-datatable .p-datatable-tbody > tr.calendar-events-row-completed:hover,
+:root[data-app-theme='midnight'] .calendar-events-table-page .user-table.calendar-events-activities-table.p-datatable .p-datatable-tbody > tr.calendar-events-row-completed:hover > td {
+  background: var(--table-row-success-hover-bg) !important;
+}
+
 .calendar-events-actions-placeholder {
   color: #94a3b8;
   font-size: 14px;
@@ -3801,6 +4708,20 @@ body {
 .user-name-cell span {
   color: #62749a;
   font-size: 12px;
+}
+
+.module-toolbar-title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.module-toolbar-subtext {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.calendar-event-title-cell {
+  color: #233a65;
 }
 
 .table-search {
@@ -5366,6 +6287,48 @@ body {
   background: #e2f4ea !important;
 }
 
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-resolved,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-resolved > td,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-resolved,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-resolved > td {
+  background: var(--table-row-warning-bg) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-resolved:hover,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-resolved:hover > td,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-resolved:hover,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-resolved:hover > td {
+  background: var(--table-row-warning-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-selected.tickets-row-resolved,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-selected.tickets-row-resolved > td,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-selected.tickets-row-resolved,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-selected.tickets-row-resolved > td {
+  background: color-mix(in srgb, var(--table-row-warning-bg) 68%, var(--table-row-selected-bg) 32%) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-closed,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-closed > td,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-closed,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-closed > td {
+  background: var(--table-row-success-bg) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-closed:hover,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-closed:hover > td,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-closed:hover,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-closed:hover > td {
+  background: var(--table-row-success-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-selected.tickets-row-closed,
+:root[data-app-theme='dark'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-selected.tickets-row-closed > td,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-selected.tickets-row-closed,
+:root[data-app-theme='midnight'] .user-table.tickets-table-compact.p-datatable .p-datatable-tbody > tr.tickets-row-selected.tickets-row-closed > td {
+  background: color-mix(in srgb, var(--table-row-success-bg) 68%, var(--table-row-selected-bg) 32%) !important;
+}
+
 .user-table.tickets-table-compact .tickets-title-cell {
   display: block;
   font-size: 13px;
@@ -5782,6 +6745,113 @@ body {
   min-height: 360px;
 }
 
+.ticket-cycle-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  border: 1px solid #dbe4f4;
+  background: #f4f7fc;
+}
+
+.ticket-cycle-label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #2d3a5a;
+}
+
+.ticket-cycle-dropdown {
+  min-width: 200px;
+}
+
+.ticket-cycle-placeholder {
+  color: #7a8cad;
+}
+
+.ticket-cycle-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ticket-cycle-badge-version {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid #c3d1ec;
+  background: #eef3ff;
+  color: #2a4b8f;
+  z-index: 1;
+}
+
+.ticket-cycle-badge-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  margin-left: -8px;
+  padding: 0 14px 0 18px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.ticket-cycle-badge-status--closed {
+  background: #f3f6fb;
+  border-color: #d9e1ee;
+  color: #4a5a78;
+}
+
+.ticket-cycle-badge-status--open {
+  background: #e7f4ff;
+  border-color: #c8def5;
+  color: #1f5d9c;
+}
+
+.ticket-cycle-badge-status--in_progress {
+  background: #e8f5ff;
+  border-color: #c6def8;
+  color: #215f9f;
+}
+
+.ticket-cycle-badge-status--in_review {
+  background: #fff5e7;
+  border-color: #f1dcc0;
+  color: #87571a;
+}
+
+.ticket-cycle-badge-status--resolved {
+  background: #e9f8ee;
+  border-color: #cae6d3;
+  color: #256045;
+}
+
+.ticket-cycle-note {
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid #d6deef;
+  background: linear-gradient(180deg, #f7faff 0%, #eef4ff 100%);
+  color: #2a3e66;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) inset;
+}
+
 .ticket-detail-approval-bar {
   margin: 0 0 10px;
   padding: 10px 12px;
@@ -5803,6 +6873,66 @@ body {
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 12px;
+}
+
+.ticket-reopen-btn.p-button {
+  margin-top: 8px;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid #c8d7f6;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef3ff 100%);
+  color: #2f4f94;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.ticket-reopen-btn.p-button:not(:disabled):hover {
+  border-color: #b7caef;
+  background: linear-gradient(180deg, #f0f6ff 0%, #e6eeff 100%);
+  color: #254688;
+}
+
+.ticket-reopen-btn.p-button .p-button-icon {
+  font-size: 0.78rem;
+}
+
+.ticket-reopen-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.ticket-reopen-body .ticket-form-hint {
+  margin-bottom: 2px;
+  color: #4b5f84;
+}
+
+.ticket-reopen-dialog .p-dialog-header {
+  border-bottom: 1px solid #e2e8f5;
+  background: linear-gradient(180deg, #fdfefe 0%, #f5f8ff 100%);
+}
+
+.ticket-reopen-dialog .p-dialog-content {
+  padding-top: 12px;
+}
+
+.ticket-reopen-confirm-btn.p-button {
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-weight: 700;
+  background: linear-gradient(180deg, #5f79ea 0%, #4d67d4 100%);
+  border-color: #4a63cd;
+  box-shadow: 0 6px 16px rgba(72, 99, 190, 0.25);
+}
+
+.ticket-reopen-confirm-btn.p-button:not(:disabled):hover {
+  background: linear-gradient(180deg, #5671e6 0%, #445fc9 100%);
+}
+
+.ticket-reopen-cancel-btn.p-button {
+  font-weight: 600;
 }
 
 .ticket-detail-tabs-error {
@@ -8193,4 +9323,1002 @@ body {
   padding-top: 0;
   max-height: calc(92vh - 4.5rem);
   overflow-y: auto;
+}
+
+/* =========================================================
+   FINAL DARK/MIDNIGHT NORMALIZATION (high-precedence)
+   Keeps late light-only rules from leaking into dark themes.
+   ========================================================= */
+:root[data-app-theme='dark'],
+:root[data-app-theme='midnight'] {
+  --theme-overlay-surface: color-mix(in srgb, var(--bg-surface) 82%, var(--bg-surface-hover) 18%);
+}
+
+:root[data-app-theme='dark'] .project-dialog .p-dialog,
+:root[data-app-theme='dark'] .project-dialog .p-dialog-header,
+:root[data-app-theme='dark'] .project-dialog .p-dialog-content,
+:root[data-app-theme='dark'] .user-dialog .p-dialog,
+:root[data-app-theme='dark'] .user-dialog .p-dialog-header,
+:root[data-app-theme='dark'] .user-dialog .p-dialog-content,
+:root[data-app-theme='dark'] .ticket-status-comment-dialog .p-dialog,
+:root[data-app-theme='dark'] .ticket-status-comment-dialog .p-dialog-header,
+:root[data-app-theme='dark'] .ticket-status-comment-dialog .p-dialog-content,
+:root[data-app-theme='dark'] .calendar-add-dialog .p-dialog,
+:root[data-app-theme='dark'] .calendar-add-dialog .p-dialog-header,
+:root[data-app-theme='dark'] .calendar-add-dialog .p-dialog-content,
+:root[data-app-theme='dark'] .sprints-ticket-create-dialog .p-dialog,
+:root[data-app-theme='dark'] .sprints-ticket-create-dialog .p-dialog-header,
+:root[data-app-theme='dark'] .sprints-ticket-create-dialog .p-dialog-content,
+:root[data-app-theme='midnight'] .project-dialog .p-dialog,
+:root[data-app-theme='midnight'] .project-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .project-dialog .p-dialog-content,
+:root[data-app-theme='midnight'] .user-dialog .p-dialog,
+:root[data-app-theme='midnight'] .user-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .user-dialog .p-dialog-content,
+:root[data-app-theme='midnight'] .ticket-status-comment-dialog .p-dialog,
+:root[data-app-theme='midnight'] .ticket-status-comment-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .ticket-status-comment-dialog .p-dialog-content,
+:root[data-app-theme='midnight'] .calendar-add-dialog .p-dialog,
+:root[data-app-theme='midnight'] .calendar-add-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .calendar-add-dialog .p-dialog-content,
+:root[data-app-theme='midnight'] .sprints-ticket-create-dialog .p-dialog,
+:root[data-app-theme='midnight'] .sprints-ticket-create-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .sprints-ticket-create-dialog .p-dialog-content {
+  background: var(--theme-overlay-surface) !important;
+  color: var(--text-main) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-workspace,
+:root[data-app-theme='dark'] .tickets-left-pane,
+:root[data-app-theme='dark'] .tickets-left-head,
+:root[data-app-theme='dark'] .tickets-right-pane,
+:root[data-app-theme='dark'] .user-table-shell,
+:root[data-app-theme='dark'] .tickets-detail-header,
+:root[data-app-theme='dark'] .tickets-detail-body,
+:root[data-app-theme='dark'] .ticket-detail-sidebar,
+:root[data-app-theme='dark'] .ticket-detail-main,
+:root[data-app-theme='dark'] .tickets-lead-tabs,
+:root[data-app-theme='dark'] .tickets-view-toggle.p-selectbutton,
+:root[data-app-theme='dark'] .tickets-lead-tab-pill,
+:root[data-app-theme='dark'] .tickets-view-toggle.p-selectbutton .p-button.p-highlight,
+:root[data-app-theme='dark'] .ticket-ref-preview-banner,
+:root[data-app-theme='dark'] .ticket-conv-thread--chat,
+:root[data-app-theme='dark'] .ticket-conv-bubble,
+:root[data-app-theme='dark'] .ticket-conv-reply--chat,
+:root[data-app-theme='dark'] .ticket-chat-bubble,
+:root[data-app-theme='dark'] .ticket-chat-media-card,
+:root[data-app-theme='dark'] .ticket-attachments-list,
+:root[data-app-theme='dark'] .ticket-attachments-empty,
+:root[data-app-theme='dark'] .ticket-timeline-content,
+:root[data-app-theme='dark'] .ticket-detail-readonly,
+:root[data-app-theme='midnight'] .tickets-workspace,
+:root[data-app-theme='midnight'] .tickets-left-pane,
+:root[data-app-theme='midnight'] .tickets-left-head,
+:root[data-app-theme='midnight'] .tickets-right-pane,
+:root[data-app-theme='midnight'] .user-table-shell,
+:root[data-app-theme='midnight'] .tickets-detail-header,
+:root[data-app-theme='midnight'] .tickets-detail-body,
+:root[data-app-theme='midnight'] .ticket-detail-sidebar,
+:root[data-app-theme='midnight'] .ticket-detail-main,
+:root[data-app-theme='midnight'] .tickets-lead-tabs,
+:root[data-app-theme='midnight'] .tickets-view-toggle.p-selectbutton,
+:root[data-app-theme='midnight'] .tickets-lead-tab-pill,
+:root[data-app-theme='midnight'] .tickets-view-toggle.p-selectbutton .p-button.p-highlight,
+:root[data-app-theme='midnight'] .ticket-ref-preview-banner,
+:root[data-app-theme='midnight'] .ticket-conv-thread--chat,
+:root[data-app-theme='midnight'] .ticket-conv-bubble,
+:root[data-app-theme='midnight'] .ticket-conv-reply--chat,
+:root[data-app-theme='midnight'] .ticket-chat-bubble,
+:root[data-app-theme='midnight'] .ticket-chat-media-card,
+:root[data-app-theme='midnight'] .ticket-attachments-list,
+:root[data-app-theme='midnight'] .ticket-attachments-empty,
+:root[data-app-theme='midnight'] .ticket-timeline-content,
+:root[data-app-theme='midnight'] .ticket-detail-readonly {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-left-head,
+:root[data-app-theme='dark'] .tickets-detail-header,
+:root[data-app-theme='midnight'] .tickets-left-head,
+:root[data-app-theme='midnight'] .tickets-detail-header {
+  background: var(--theme-overlay-surface) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-lead-tab,
+:root[data-app-theme='dark'] .tickets-view-toggle.p-selectbutton .p-button,
+:root[data-app-theme='midnight'] .tickets-lead-tab,
+:root[data-app-theme='midnight'] .tickets-view-toggle.p-selectbutton .p-button {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-lead-tab--active,
+:root[data-app-theme='dark'] .tickets-view-toggle.p-selectbutton .p-button.p-highlight,
+:root[data-app-theme='midnight'] .tickets-lead-tab--active,
+:root[data-app-theme='midnight'] .tickets-view-toggle.p-selectbutton .p-button.p-highlight {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-detail-title-ref,
+:root[data-app-theme='midnight'] .tickets-detail-title-ref {
+  background: color-mix(in srgb, var(--table-row-selected-bg) 38%, var(--bg-surface) 62%) !important;
+  border-color: color-mix(in srgb, var(--table-row-selected-bg) 72%, #ffffff 28%) !important;
+  color: #d9e8ff !important;
+}
+
+:root[data-app-theme='dark'] .ticket-ref-preview-label,
+:root[data-app-theme='dark'] .ticket-detail-kicker,
+:root[data-app-theme='midnight'] .ticket-ref-preview-label,
+:root[data-app-theme='midnight'] .ticket-detail-kicker {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-cycle-toolbar,
+:root[data-app-theme='midnight'] .ticket-cycle-toolbar {
+  background: var(--theme-overlay-surface) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-cycle-label,
+:root[data-app-theme='midnight'] .ticket-cycle-label {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-cycle-badge-version,
+:root[data-app-theme='midnight'] .ticket-cycle-badge-version {
+  background: color-mix(in srgb, var(--primary-color) 20%, var(--bg-surface) 80%) !important;
+  border-color: color-mix(in srgb, var(--primary-color) 45%, var(--border-color) 55%) !important;
+  color: color-mix(in srgb, #dbe8ff 76%, var(--text-main) 24%) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-cycle-badge-status,
+:root[data-app-theme='midnight'] .ticket-cycle-badge-status {
+  background: color-mix(in srgb, var(--bg-surface) 85%, var(--theme-overlay-surface) 15%) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-cycle-note,
+:root[data-app-theme='midnight'] .ticket-cycle-note {
+  background: color-mix(in srgb, var(--primary-color) 10%, var(--bg-surface) 90%) !important;
+  border-color: color-mix(in srgb, var(--primary-color) 32%, var(--border-color) 68%) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-reopen-btn.p-button,
+:root[data-app-theme='midnight'] .ticket-reopen-btn.p-button {
+  background: color-mix(in srgb, var(--primary-color) 16%, var(--bg-surface) 84%) !important;
+  border-color: color-mix(in srgb, var(--primary-color) 38%, var(--border-color) 62%) !important;
+  color: color-mix(in srgb, #dbe8ff 72%, var(--text-main) 28%) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-reopen-confirm-btn.p-button,
+:root[data-app-theme='midnight'] .ticket-reopen-confirm-btn.p-button {
+  background: color-mix(in srgb, var(--primary-color) 62%, #4f63c9 38%) !important;
+  border-color: color-mix(in srgb, var(--primary-color) 72%, #3748a6 28%) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-reopen-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .ticket-reopen-dialog .p-dialog-header {
+  background: var(--theme-overlay-surface) !important;
+  border-bottom-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-page-title,
+:root[data-app-theme='dark'] .tickets-detail-title,
+:root[data-app-theme='dark'] .tickets-detail-title-input,
+:root[data-app-theme='dark'] .tickets-detail-title-ref,
+:root[data-app-theme='dark'] .ticket-ref-preview-value,
+:root[data-app-theme='dark'] .ticket-chat-author,
+:root[data-app-theme='dark'] .ticket-chat-body,
+:root[data-app-theme='dark'] .ticket-conv-author,
+:root[data-app-theme='dark'] .ticket-conv-body,
+:root[data-app-theme='dark'] .ticket-attachment-link,
+:root[data-app-theme='dark'] .ticket-timeline-head strong,
+:root[data-app-theme='dark'] .ticket-readonly-dl dd,
+:root[data-app-theme='midnight'] .tickets-page-title,
+:root[data-app-theme='midnight'] .tickets-detail-title,
+:root[data-app-theme='midnight'] .tickets-detail-title-input,
+:root[data-app-theme='midnight'] .tickets-detail-title-ref,
+:root[data-app-theme='midnight'] .ticket-ref-preview-value,
+:root[data-app-theme='midnight'] .ticket-chat-author,
+:root[data-app-theme='midnight'] .ticket-chat-body,
+:root[data-app-theme='midnight'] .ticket-conv-author,
+:root[data-app-theme='midnight'] .ticket-conv-body,
+:root[data-app-theme='midnight'] .ticket-attachment-link,
+:root[data-app-theme='midnight'] .ticket-timeline-head strong,
+:root[data-app-theme='midnight'] .ticket-readonly-dl dd {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-page-sub,
+:root[data-app-theme='dark'] .ticket-ref-preview-hint,
+:root[data-app-theme='dark'] .ticket-detail-approval-hint,
+:root[data-app-theme='dark'] .ticket-form-label,
+:root[data-app-theme='dark'] .ticket-form-hint,
+:root[data-app-theme='dark'] .ticket-chat-time,
+:root[data-app-theme='dark'] .ticket-conv-time,
+:root[data-app-theme='dark'] .ticket-detail-muted,
+:root[data-app-theme='dark'] .ticket-readonly-dl dt,
+:root[data-app-theme='midnight'] .tickets-page-sub,
+:root[data-app-theme='midnight'] .ticket-ref-preview-hint,
+:root[data-app-theme='midnight'] .ticket-detail-approval-hint,
+:root[data-app-theme='midnight'] .ticket-form-label,
+:root[data-app-theme='midnight'] .ticket-form-hint,
+:root[data-app-theme='midnight'] .ticket-chat-time,
+:root[data-app-theme='midnight'] .ticket-conv-time,
+:root[data-app-theme='midnight'] .ticket-detail-muted,
+:root[data-app-theme='midnight'] .ticket-readonly-dl dt {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-workspace-split,
+:root[data-app-theme='dark'] .calendar-detail-panel,
+:root[data-app-theme='dark'] .calendar-event-card,
+:root[data-app-theme='dark'] .calendar-milestones-section,
+:root[data-app-theme='dark'] .calendar-event-report-row,
+:root[data-app-theme='dark'] .personal-tasks-card,
+:root[data-app-theme='dark'] .personal-tasks-date-bar,
+:root[data-app-theme='dark'] .personal-tasks-create,
+:root[data-app-theme='dark'] .personal-tasks-row,
+:root[data-app-theme='dark'] .personal-tasks-view-toggle,
+:root[data-app-theme='dark'] .personal-tasks-month-wrap,
+:root[data-app-theme='dark'] .personal-tasks-month-shell,
+:root[data-app-theme='dark'] .personal-tasks-day-cell,
+:root[data-app-theme='dark'] .calendar-attachment-viewer-dialog .p-dialog-content,
+:root[data-app-theme='dark'] .calendar-attachment-viewer-frame,
+:root[data-app-theme='dark'] .calendar-attachment-viewer-img,
+:root[data-app-theme='midnight'] .calendar-workspace-split,
+:root[data-app-theme='midnight'] .calendar-detail-panel,
+:root[data-app-theme='midnight'] .calendar-event-card,
+:root[data-app-theme='midnight'] .calendar-milestones-section,
+:root[data-app-theme='midnight'] .calendar-event-report-row,
+:root[data-app-theme='midnight'] .personal-tasks-card,
+:root[data-app-theme='midnight'] .personal-tasks-date-bar,
+:root[data-app-theme='midnight'] .personal-tasks-create,
+:root[data-app-theme='midnight'] .personal-tasks-row,
+:root[data-app-theme='midnight'] .personal-tasks-view-toggle,
+:root[data-app-theme='midnight'] .personal-tasks-month-wrap,
+:root[data-app-theme='midnight'] .personal-tasks-month-shell,
+:root[data-app-theme='midnight'] .personal-tasks-day-cell,
+:root[data-app-theme='midnight'] .calendar-attachment-viewer-dialog .p-dialog-content,
+:root[data-app-theme='midnight'] .calendar-attachment-viewer-frame,
+:root[data-app-theme='midnight'] .calendar-attachment-viewer-img {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-event-report-error,
+:root[data-app-theme='midnight'] .calendar-event-report-error {
+  background: color-mix(in srgb, #a61e1e 22%, var(--bg-surface) 78%) !important;
+  border-color: color-mix(in srgb, #a61e1e 38%, var(--border-color) 62%) !important;
+  color: #f5c6c6 !important;
+}
+
+:root[data-app-theme='dark'] .personal-tasks-pending,
+:root[data-app-theme='midnight'] .personal-tasks-pending {
+  background: color-mix(in srgb, var(--table-row-warning-bg) 48%, var(--bg-surface) 52%) !important;
+  border-color: color-mix(in srgb, var(--table-row-warning-bg) 74%, #ffffff 26%) !important;
+}
+
+:root[data-app-theme='dark'] .personal-tasks-pending-title,
+:root[data-app-theme='dark'] .personal-tasks-pending-hint,
+:root[data-app-theme='dark'] .personal-tasks-date-long,
+:root[data-app-theme='dark'] .personal-tasks-day-heading,
+:root[data-app-theme='dark'] .personal-tasks-row-title-btn,
+:root[data-app-theme='dark'] .personal-tasks-row-title,
+:root[data-app-theme='dark'] .personal-tasks-month-panel-date,
+:root[data-app-theme='dark'] .personal-tasks-month-label,
+:root[data-app-theme='midnight'] .personal-tasks-pending-title,
+:root[data-app-theme='midnight'] .personal-tasks-pending-hint,
+:root[data-app-theme='midnight'] .personal-tasks-date-long,
+:root[data-app-theme='midnight'] .personal-tasks-day-heading,
+:root[data-app-theme='midnight'] .personal-tasks-row-title-btn,
+:root[data-app-theme='midnight'] .personal-tasks-row-title,
+:root[data-app-theme='midnight'] .personal-tasks-month-panel-date,
+:root[data-app-theme='midnight'] .personal-tasks-month-label {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .personal-tasks-loading,
+:root[data-app-theme='dark'] .personal-tasks-day-count,
+:root[data-app-theme='dark'] .personal-tasks-create-title,
+:root[data-app-theme='dark'] .personal-tasks-link-btn,
+:root[data-app-theme='dark'] .personal-tasks-label,
+:root[data-app-theme='midnight'] .personal-tasks-loading,
+:root[data-app-theme='midnight'] .personal-tasks-day-count,
+:root[data-app-theme='midnight'] .personal-tasks-create-title,
+:root[data-app-theme='midnight'] .personal-tasks-link-btn,
+:root[data-app-theme='midnight'] .personal-tasks-label {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .personal-tasks-view-btn.p-button.personal-tasks-view-btn--on,
+:root[data-app-theme='midnight'] .personal-tasks-view-btn.p-button.personal-tasks-view-btn--on {
+  background: color-mix(in srgb, var(--table-row-selected-bg) 36%, var(--bg-surface) 64%) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .personal-tasks-input,
+:root[data-app-theme='dark'] .personal-tasks-body,
+:root[data-app-theme='midnight'] .personal-tasks-input,
+:root[data-app-theme='midnight'] .personal-tasks-body {
+  background: var(--bg-surface-hover) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-table-shell,
+:root[data-app-theme='dark'] .kb-documents-table.p-datatable .p-datatable-wrapper,
+:root[data-app-theme='midnight'] .kb-documents-table-shell,
+:root[data-app-theme='midnight'] .kb-documents-table.p-datatable .p-datatable-wrapper {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-table.p-datatable .p-datatable-thead > tr > th,
+:root[data-app-theme='midnight'] .kb-documents-table.p-datatable .p-datatable-thead > tr > th {
+  background: var(--table-head-bg) !important;
+  color: var(--text-main) !important;
+  border-bottom-color: var(--table-head-border) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-table.p-datatable .p-datatable-tbody > tr > td,
+:root[data-app-theme='midnight'] .kb-documents-table.p-datatable .p-datatable-tbody > tr > td {
+  color: var(--text-main) !important;
+  border-color: var(--table-body-border) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-actions-cell,
+:root[data-app-theme='midnight'] .kb-documents-actions-cell {
+  background: color-mix(in srgb, var(--bg-surface-hover) 56%, var(--bg-surface) 44%) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-action-btn.p-button.p-button-text,
+:root[data-app-theme='midnight'] .kb-documents-action-btn.p-button.p-button-text {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-action-btn.p-button.p-button-text:hover,
+:root[data-app-theme='midnight'] .kb-documents-action-btn.p-button.p-button-text:hover {
+  background: var(--table-row-hover-bg) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-toolbar-card,
+:root[data-app-theme='dark'] .kb-documents-breadcrumb,
+:root[data-app-theme='dark'] .kb-documents-bc-link:hover,
+:root[data-app-theme='dark'] .kb-documents-project-dd.p-dropdown,
+:root[data-app-theme='dark'] .kb-documents-project-dd .p-dropdown,
+:root[data-app-theme='dark'] .kb-documents-file-icon-wrap,
+:root[data-app-theme='dark'] .kb-documents-folder-icon-wrap,
+:root[data-app-theme='dark'] .kb-documents-file-actions,
+:root[data-app-theme='midnight'] .kb-documents-toolbar-card,
+:root[data-app-theme='midnight'] .kb-documents-breadcrumb,
+:root[data-app-theme='midnight'] .kb-documents-bc-link:hover,
+:root[data-app-theme='midnight'] .kb-documents-project-dd.p-dropdown,
+:root[data-app-theme='midnight'] .kb-documents-project-dd .p-dropdown,
+:root[data-app-theme='midnight'] .kb-documents-file-icon-wrap,
+:root[data-app-theme='midnight'] .kb-documents-folder-icon-wrap,
+:root[data-app-theme='midnight'] .kb-documents-file-actions {
+  background: var(--theme-overlay-surface) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-kicker,
+:root[data-app-theme='dark'] .kb-documents-title,
+:root[data-app-theme='dark'] .kb-documents-name-text,
+:root[data-app-theme='dark'] .kb-documents-meta-size,
+:root[data-app-theme='dark'] .kb-documents-bc-link--current,
+:root[data-app-theme='midnight'] .kb-documents-kicker,
+:root[data-app-theme='midnight'] .kb-documents-title,
+:root[data-app-theme='midnight'] .kb-documents-name-text,
+:root[data-app-theme='midnight'] .kb-documents-meta-size,
+:root[data-app-theme='midnight'] .kb-documents-bc-link--current {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-sub,
+:root[data-app-theme='dark'] .kb-documents-label,
+:root[data-app-theme='dark'] .kb-documents-bc-label,
+:root[data-app-theme='dark'] .kb-documents-bc-link,
+:root[data-app-theme='dark'] .kb-documents-meta-by,
+:root[data-app-theme='midnight'] .kb-documents-sub,
+:root[data-app-theme='midnight'] .kb-documents-label,
+:root[data-app-theme='midnight'] .kb-documents-bc-label,
+:root[data-app-theme='midnight'] .kb-documents-bc-link,
+:root[data-app-theme='midnight'] .kb-documents-meta-by {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-btn-secondary.p-button.p-button-outlined,
+:root[data-app-theme='dark'] .kb-documents-btn-danger.p-button.p-button-outlined,
+:root[data-app-theme='midnight'] .kb-documents-btn-secondary.p-button.p-button-outlined,
+:root[data-app-theme='midnight'] .kb-documents-btn-danger.p-button.p-button-outlined {
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+  background: transparent !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-btn-secondary.p-button.p-button-outlined:hover,
+:root[data-app-theme='dark'] .kb-documents-btn-danger.p-button.p-button-outlined:hover,
+:root[data-app-theme='midnight'] .kb-documents-btn-secondary.p-button.p-button-outlined:hover,
+:root[data-app-theme='midnight'] .kb-documents-btn-danger.p-button.p-button-outlined:hover {
+  background: var(--table-row-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-ref-chip,
+:root[data-app-theme='midnight'] .tickets-ref-chip {
+  background: var(--table-row-alt-bg) !important;
+  border-color: var(--table-head-border) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-ref-cell,
+:root[data-app-theme='midnight'] .tickets-ref-cell {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .tickets-ref-type-bug_fix,
+:root[data-app-theme='midnight'] .tickets-ref-type-bug_fix {
+  background: color-mix(in srgb, #d84949 28%, var(--bg-surface) 72%) !important;
+  border-color: color-mix(in srgb, #d84949 58%, var(--border-color) 42%) !important;
+  color: #ffd2d2 !important;
+}
+
+:root[data-app-theme='dark'] .tickets-ref-type-feature_request,
+:root[data-app-theme='midnight'] .tickets-ref-type-feature_request {
+  background: color-mix(in srgb, #8b5cf6 30%, var(--bg-surface) 70%) !important;
+  border-color: color-mix(in srgb, #8b5cf6 56%, var(--border-color) 44%) !important;
+  color: #e8dbff !important;
+}
+
+:root[data-app-theme='dark'] .tickets-ref-type-service_request,
+:root[data-app-theme='midnight'] .tickets-ref-type-service_request {
+  background: color-mix(in srgb, #3b82f6 28%, var(--bg-surface) 72%) !important;
+  border-color: color-mix(in srgb, #3b82f6 56%, var(--border-color) 44%) !important;
+  color: #d9ebff !important;
+}
+
+:root[data-app-theme='dark'] .tickets-ref-type-design_rework,
+:root[data-app-theme='midnight'] .tickets-ref-type-design_rework {
+  background: color-mix(in srgb, #a855f7 28%, var(--bg-surface) 72%) !important;
+  border-color: color-mix(in srgb, #a855f7 54%, var(--border-color) 46%) !important;
+  color: #eddfff !important;
+}
+
+:root[data-app-theme='dark'] .tickets-ref-type-performance_issue,
+:root[data-app-theme='midnight'] .tickets-ref-type-performance_issue {
+  background: color-mix(in srgb, #f59e0b 32%, var(--bg-surface) 68%) !important;
+  border-color: color-mix(in srgb, #f59e0b 58%, var(--border-color) 42%) !important;
+  color: #ffe7bf !important;
+}
+
+:root[data-app-theme='dark'] .tickets-ref-type-security_vulnerability,
+:root[data-app-theme='midnight'] .tickets-ref-type-security_vulnerability {
+  background: color-mix(in srgb, #ef4444 34%, var(--bg-surface) 66%) !important;
+  border-color: color-mix(in srgb, #ef4444 60%, var(--border-color) 40%) !important;
+  color: #ffd8dd !important;
+}
+
+:root[data-app-theme='dark'] .tickets-ref-type-documentation,
+:root[data-app-theme='midnight'] .tickets-ref-type-documentation {
+  background: color-mix(in srgb, #14b8a6 26%, var(--bg-surface) 74%) !important;
+  border-color: color-mix(in srgb, #14b8a6 52%, var(--border-color) 48%) !important;
+  color: #d0fff9 !important;
+}
+
+/* Cross-page final consistency */
+:root[data-app-theme='dark'] .login-layout,
+:root[data-app-theme='dark'] .login-panel,
+:root[data-app-theme='dark'] .top-header,
+:root[data-app-theme='dark'] .notification-panel,
+:root[data-app-theme='dark'] .settings-sidebar,
+:root[data-app-theme='dark'] .settings-tab-btn,
+:root[data-app-theme='dark'] .settings-summary-card,
+:root[data-app-theme='dark'] .settings-summary-chart-card,
+:root[data-app-theme='dark'] .settings-avatar-reset-btn,
+:root[data-app-theme='dark'] .notification-btn,
+:root[data-app-theme='dark'] .settings-btn,
+:root[data-app-theme='dark'] .notification-read-btn,
+:root[data-app-theme='dark'] .notification-delete-btn,
+:root[data-app-theme='dark'] .notification-ack-btn,
+:root[data-app-theme='midnight'] .login-layout,
+:root[data-app-theme='midnight'] .login-panel,
+:root[data-app-theme='midnight'] .top-header,
+:root[data-app-theme='midnight'] .notification-panel,
+:root[data-app-theme='midnight'] .settings-sidebar,
+:root[data-app-theme='midnight'] .settings-tab-btn,
+:root[data-app-theme='midnight'] .settings-summary-card,
+:root[data-app-theme='midnight'] .settings-summary-chart-card,
+:root[data-app-theme='midnight'] .settings-avatar-reset-btn,
+:root[data-app-theme='midnight'] .notification-btn,
+:root[data-app-theme='midnight'] .settings-btn,
+:root[data-app-theme='midnight'] .notification-read-btn,
+:root[data-app-theme='midnight'] .notification-delete-btn,
+:root[data-app-theme='midnight'] .notification-ack-btn {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .showcase-cards article,
+:root[data-app-theme='dark'] .settings-avatar-preview-shell,
+:root[data-app-theme='dark'] .settings-avatar-preview-fallback,
+:root[data-app-theme='dark'] .settings-inputgroup .p-inputgroup-addon,
+:root[data-app-theme='dark'] .settings-readonly-field,
+:root[data-app-theme='dark'] .settings-file-input,
+:root[data-app-theme='dark'] .notification-item,
+:root[data-app-theme='dark'] .notification-dialog .p-dialog-header,
+:root[data-app-theme='dark'] .notification-panel-head,
+:root[data-app-theme='midnight'] .showcase-cards article,
+:root[data-app-theme='midnight'] .settings-avatar-preview-shell,
+:root[data-app-theme='midnight'] .settings-avatar-preview-fallback,
+:root[data-app-theme='midnight'] .settings-inputgroup .p-inputgroup-addon,
+:root[data-app-theme='midnight'] .settings-readonly-field,
+:root[data-app-theme='midnight'] .settings-file-input,
+:root[data-app-theme='midnight'] .notification-item,
+:root[data-app-theme='midnight'] .notification-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .notification-panel-head {
+  background: var(--theme-overlay-surface) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .top-nav button,
+:root[data-app-theme='dark'] .logout-btn,
+:root[data-app-theme='dark'] .user-chip,
+:root[data-app-theme='dark'] .settings-grid label,
+:root[data-app-theme='dark'] .settings-pref-field > span,
+:root[data-app-theme='dark'] .settings-summary-filters > span,
+:root[data-app-theme='dark'] .notification-dialog .p-dialog-title,
+:root[data-app-theme='dark'] .notification-item-text strong,
+:root[data-app-theme='dark'] .notification-item-text span,
+:root[data-app-theme='dark'] .notification-panel-head,
+:root[data-app-theme='midnight'] .top-nav button,
+:root[data-app-theme='midnight'] .logout-btn,
+:root[data-app-theme='midnight'] .user-chip,
+:root[data-app-theme='midnight'] .settings-grid label,
+:root[data-app-theme='midnight'] .settings-pref-field > span,
+:root[data-app-theme='midnight'] .settings-summary-filters > span,
+:root[data-app-theme='midnight'] .notification-dialog .p-dialog-title,
+:root[data-app-theme='midnight'] .notification-item-text strong,
+:root[data-app-theme='midnight'] .notification-item-text span,
+:root[data-app-theme='midnight'] .notification-panel-head {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .top-nav button.active,
+:root[data-app-theme='midnight'] .top-nav button.active {
+  color: color-mix(in srgb, var(--primary-color) 72%, #cdd8ff 28%) !important;
+  border-bottom-color: var(--primary-color) !important;
+}
+
+:root[data-app-theme='dark'] .settings-note,
+:root[data-app-theme='dark'] .settings-summary-card span,
+:root[data-app-theme='dark'] .settings-summary-chart-card > span,
+:root[data-app-theme='dark'] .notification-item-text small,
+:root[data-app-theme='dark'] .notification-empty,
+:root[data-app-theme='dark'] .login-form p,
+:root[data-app-theme='midnight'] .settings-note,
+:root[data-app-theme='midnight'] .settings-summary-card span,
+:root[data-app-theme='midnight'] .settings-summary-chart-card > span,
+:root[data-app-theme='midnight'] .notification-item-text small,
+:root[data-app-theme='midnight'] .notification-empty,
+:root[data-app-theme='midnight'] .login-form p {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .notification-list--modal .notification-item,
+:root[data-app-theme='midnight'] .notification-list--modal .notification-item {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--theme-overlay-surface) 88%, #ffffff 12%) 0%, var(--theme-overlay-surface) 100%) !important;
+  border-color: var(--border-color) !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35) !important;
+}
+
+:root[data-app-theme='dark'] .notification-item-dot,
+:root[data-app-theme='midnight'] .notification-item-dot {
+  background: color-mix(in srgb, var(--primary-color) 72%, #8db2ff 28%) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 28%, transparent 72%) !important;
+}
+
+/* Approvals inbox — dark / midnight */
+:root[data-app-theme='dark'] .notification-dialog--inbox .p-dialog-header,
+:root[data-app-theme='midnight'] .notification-dialog--inbox .p-dialog-header {
+  background: linear-gradient(180deg, var(--bg-surface) 0%, color-mix(in srgb, var(--bg-surface) 88%, var(--primary-color) 12%) 100%) !important;
+  border-bottom-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .notification-dialog-heading,
+:root[data-app-theme='dark'] .notification-inbox-title,
+:root[data-app-theme='dark'] .notification-inbox-empty-title,
+:root[data-app-theme='midnight'] .notification-dialog-heading,
+:root[data-app-theme='midnight'] .notification-inbox-title,
+:root[data-app-theme='midnight'] .notification-inbox-empty-title {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .notification-dialog-lede,
+:root[data-app-theme='dark'] .notification-inbox-toolbar-label,
+:root[data-app-theme='dark'] .notification-inbox-toolbar-label strong,
+:root[data-app-theme='dark'] .notification-inbox-meta,
+:root[data-app-theme='dark'] .notification-inbox-empty-copy,
+:root[data-app-theme='midnight'] .notification-dialog-lede,
+:root[data-app-theme='midnight'] .notification-inbox-toolbar-label,
+:root[data-app-theme='midnight'] .notification-inbox-toolbar-label strong,
+:root[data-app-theme='midnight'] .notification-inbox-meta,
+:root[data-app-theme='midnight'] .notification-inbox-empty-copy {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-toolbar-muted,
+:root[data-app-theme='midnight'] .notification-inbox-toolbar-muted {
+  color: color-mix(in srgb, var(--text-muted) 85%, var(--text-main) 15%) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-toolbar,
+:root[data-app-theme='midnight'] .notification-inbox-toolbar {
+  border-bottom-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-unread-pill,
+:root[data-app-theme='midnight'] .notification-inbox-unread-pill {
+  background: color-mix(in srgb, var(--primary-color) 22%, var(--bg-surface) 78%) !important;
+  border-color: color-mix(in srgb, var(--primary-color) 45%, var(--border-color) 55%) !important;
+  color: color-mix(in srgb, var(--primary-color) 55%, #dbe8ff 45%) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-all-read,
+:root[data-app-theme='midnight'] .notification-inbox-all-read {
+  color: color-mix(in srgb, #4ade80 55%, var(--text-muted) 45%) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-clear-all,
+:root[data-app-theme='midnight'] .notification-inbox-clear-all {
+  background: color-mix(in srgb, #f87171 12%, var(--bg-surface) 88%) !important;
+  border-color: color-mix(in srgb, #f87171 40%, var(--border-color) 60%) !important;
+  color: #fecaca !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-clear-all:not(:disabled):hover,
+:root[data-app-theme='midnight'] .notification-inbox-clear-all:not(:disabled):hover {
+  background: color-mix(in srgb, #f87171 22%, var(--bg-surface) 78%) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-card,
+:root[data-app-theme='midnight'] .notification-inbox-card {
+  background: linear-gradient(155deg, var(--theme-overlay-surface) 0%, color-mix(in srgb, var(--bg-surface) 70%, var(--theme-overlay-surface) 30%) 100%) !important;
+  border-color: var(--border-color) !important;
+  box-shadow: 0 1px 0 color-mix(in srgb, #ffffff 6%, transparent 94%) inset, 0 10px 32px rgba(0, 0, 0, 0.28) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-card:hover,
+:root[data-app-theme='midnight'] .notification-inbox-card:hover {
+  border-color: color-mix(in srgb, var(--primary-color) 35%, var(--border-color) 65%) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-card--unread,
+:root[data-app-theme='midnight'] .notification-inbox-card--unread {
+  border-left-color: color-mix(in srgb, var(--primary-color) 78%, #9db8ff 22%) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-card-icon,
+:root[data-app-theme='midnight'] .notification-inbox-card-icon {
+  background: color-mix(in srgb, var(--primary-color) 18%, var(--bg-surface) 82%) !important;
+  border-color: var(--border-color) !important;
+  color: color-mix(in srgb, var(--primary-color) 65%, #dbe8ff 35%) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-ref,
+:root[data-app-theme='midnight'] .notification-inbox-ref {
+  background: color-mix(in srgb, var(--primary-color) 20%, var(--bg-surface) 80%) !important;
+  border-color: color-mix(in srgb, var(--primary-color) 40%, var(--border-color) 60%) !important;
+  color: color-mix(in srgb, var(--primary-color) 55%, #dbe8ff 45%) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-actions,
+:root[data-app-theme='midnight'] .notification-inbox-actions {
+  border-top-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-btn--secondary,
+:root[data-app-theme='midnight'] .notification-inbox-btn--secondary {
+  background: var(--bg-surface-hover) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-btn--secondary:not(:disabled):hover,
+:root[data-app-theme='midnight'] .notification-inbox-btn--secondary:not(:disabled):hover {
+  background: var(--table-row-hover-bg) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-btn--danger,
+:root[data-app-theme='midnight'] .notification-inbox-btn--danger {
+  background: color-mix(in srgb, #f87171 14%, var(--bg-surface) 86%) !important;
+  border-color: color-mix(in srgb, #f87171 35%, var(--border-color) 65%) !important;
+  color: #fecaca !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-btn--primary,
+:root[data-app-theme='midnight'] .notification-inbox-btn--primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary-color) 92%, #1e2a44 8%) 0%, color-mix(in srgb, var(--primary-color) 75%, #0f172a 25%) 100%) !important;
+  border-color: color-mix(in srgb, var(--primary-color) 55%, var(--border-color) 45%) !important;
+  color: #f0f4ff !important;
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--primary-color) 35%, transparent 65%) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-empty-icon,
+:root[data-app-theme='midnight'] .notification-inbox-empty-icon {
+  background: color-mix(in srgb, var(--primary-color) 14%, var(--bg-surface) 86%) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-status--open,
+:root[data-app-theme='midnight'] .notification-inbox-status--open {
+  background: var(--table-row-alt-bg) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-status--in_progress,
+:root[data-app-theme='midnight'] .notification-inbox-status--in_progress {
+  background: color-mix(in srgb, #60a5fa 18%, var(--bg-surface) 82%) !important;
+  border-color: color-mix(in srgb, #60a5fa 40%, var(--border-color) 60%) !important;
+  color: #bfdbfe !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-status--in_review,
+:root[data-app-theme='midnight'] .notification-inbox-status--in_review {
+  background: color-mix(in srgb, #fbbf24 16%, var(--bg-surface) 84%) !important;
+  border-color: color-mix(in srgb, #fbbf24 38%, var(--border-color) 62%) !important;
+  color: #fde68a !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-status--resolved,
+:root[data-app-theme='midnight'] .notification-inbox-status--resolved {
+  background: color-mix(in srgb, #34d399 16%, var(--bg-surface) 84%) !important;
+  border-color: color-mix(in srgb, #34d399 38%, var(--border-color) 62%) !important;
+  color: #bbf7d0 !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-status--closed,
+:root[data-app-theme='midnight'] .notification-inbox-status--closed {
+  background: var(--table-row-alt-bg) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-new-badge,
+:root[data-app-theme='midnight'] .notification-inbox-new-badge {
+  background: color-mix(in srgb, var(--primary-color) 70%, #1a2333 30%) !important;
+  color: #eef2ff !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-doubletick,
+:root[data-app-theme='midnight'] .notification-inbox-doubletick {
+  color: #5ac8f0 !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-doubletick--muted,
+:root[data-app-theme='midnight'] .notification-inbox-doubletick--muted {
+  color: var(--text-muted) !important;
+  opacity: 0.95 !important;
+}
+
+:root[data-app-theme='dark'] .notification-inbox-markread-icon,
+:root[data-app-theme='midnight'] .notification-inbox-markread-icon {
+  color: var(--text-muted) !important;
+}
+
+/* Screenshot-targeted refinements */
+:root[data-app-theme='dark'] .ticket-meta-chip,
+:root[data-app-theme='midnight'] .ticket-meta-chip {
+  background: var(--table-row-alt-bg) !important;
+  border-color: var(--table-head-border) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .ticket-meta-chip.muted,
+:root[data-app-theme='midnight'] .ticket-meta-chip.muted {
+  background: color-mix(in srgb, var(--table-row-warning-bg) 35%, var(--bg-surface) 65%) !important;
+  border-color: color-mix(in srgb, var(--table-row-warning-bg) 58%, var(--border-color) 42%) !important;
+  color: #ffe3ba !important;
+}
+
+:root[data-app-theme='dark'] .sprints-meta-bar,
+:root[data-app-theme='dark'] .sprints-ticket-chip,
+:root[data-app-theme='midnight'] .sprints-meta-bar,
+:root[data-app-theme='midnight'] .sprints-ticket-chip {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-wizard,
+:root[data-app-theme='dark'] .sprints-wizard-launch,
+:root[data-app-theme='midnight'] .sprints-wizard,
+:root[data-app-theme='midnight'] .sprints-wizard-launch {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-wizard-connector-line,
+:root[data-app-theme='midnight'] .sprints-wizard-connector-line {
+  background: var(--table-head-border) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-wizard-node-circle,
+:root[data-app-theme='midnight'] .sprints-wizard-node-circle {
+  background: var(--table-row-alt-bg) !important;
+  border-color: var(--table-head-border) !important;
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-wizard-node--current .sprints-wizard-node-circle,
+:root[data-app-theme='midnight'] .sprints-wizard-node--current .sprints-wizard-node-circle {
+  background: color-mix(in srgb, var(--table-row-selected-bg) 45%, var(--bg-surface) 55%) !important;
+  border-color: var(--table-row-selected-bg) !important;
+  color: #e8f0ff !important;
+}
+
+:root[data-app-theme='dark'] .sprints-wizard-node-caption,
+:root[data-app-theme='dark'] .sprints-wizard-meta,
+:root[data-app-theme='dark'] .sprints-wizard-launch-hint,
+:root[data-app-theme='midnight'] .sprints-wizard-node-caption,
+:root[data-app-theme='midnight'] .sprints-wizard-meta,
+:root[data-app-theme='midnight'] .sprints-wizard-launch-hint {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .sprints-wizard-meta strong,
+:root[data-app-theme='midnight'] .sprints-wizard-meta strong {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .kb-documents-kicker,
+:root[data-app-theme='midnight'] .kb-documents-kicker {
+  background: color-mix(in srgb, var(--table-row-selected-bg) 38%, var(--bg-surface) 62%) !important;
+  border-color: color-mix(in srgb, var(--table-row-selected-bg) 70%, var(--border-color) 30%) !important;
+  color: #deebff !important;
+}
+
+:root[data-app-theme='dark'] .calendar-attachment-viewer-dialog .p-dialog-header,
+:root[data-app-theme='dark'] .calendar-attachment-viewer-dialog .p-dialog-footer,
+:root[data-app-theme='midnight'] .calendar-attachment-viewer-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .calendar-attachment-viewer-dialog .p-dialog-footer {
+  background: var(--theme-overlay-surface) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .calendar-attachment-viewer-footer .p-button.p-button-outlined,
+:root[data-app-theme='midnight'] .calendar-attachment-viewer-footer .p-button.p-button-outlined {
+  background: transparent !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+/* Admin dialogs: project/user/customer details */
+:root[data-app-theme='dark'] .project-detail-dialog .p-dialog-header,
+:root[data-app-theme='dark'] .project-detail-dialog .p-dialog-content,
+:root[data-app-theme='dark'] .customer-detail-dialog .p-dialog-header,
+:root[data-app-theme='dark'] .customer-detail-dialog .p-dialog-content,
+:root[data-app-theme='midnight'] .project-detail-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .project-detail-dialog .p-dialog-content,
+:root[data-app-theme='midnight'] .customer-detail-dialog .p-dialog-header,
+:root[data-app-theme='midnight'] .customer-detail-dialog .p-dialog-content {
+  background: var(--bg-surface) !important;
+  color: var(--text-main) !important;
+  border-color: var(--border-color) !important;
+}
+
+:root[data-app-theme='dark'] .user-form .p-inputgroup-addon,
+:root[data-app-theme='dark'] .password-toggle-btn,
+:root[data-app-theme='dark'] .status-toggle,
+:root[data-app-theme='dark'] .customer-contacts-block,
+:root[data-app-theme='dark'] .customer-create-page,
+:root[data-app-theme='dark'] .customer-create-close-btn,
+:root[data-app-theme='midnight'] .user-form .p-inputgroup-addon,
+:root[data-app-theme='midnight'] .password-toggle-btn,
+:root[data-app-theme='midnight'] .status-toggle,
+:root[data-app-theme='midnight'] .customer-contacts-block,
+:root[data-app-theme='midnight'] .customer-create-page,
+:root[data-app-theme='midnight'] .customer-create-close-btn {
+  background: var(--theme-overlay-surface) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .user-form .p-inputtext,
+:root[data-app-theme='dark'] .user-form .p-dropdown,
+:root[data-app-theme='dark'] .user-form .p-inputtextarea,
+:root[data-app-theme='dark'] .user-form .p-multiselect,
+:root[data-app-theme='dark'] .user-form .p-password-input,
+:root[data-app-theme='midnight'] .user-form .p-inputtext,
+:root[data-app-theme='midnight'] .user-form .p-dropdown,
+:root[data-app-theme='midnight'] .user-form .p-inputtextarea,
+:root[data-app-theme='midnight'] .user-form .p-multiselect,
+:root[data-app-theme='midnight'] .user-form .p-password-input {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .user-form .user-float-field > .p-inputtext:focus ~ label,
+:root[data-app-theme='dark'] .user-form .user-float-field > .p-inputtext.p-filled ~ label,
+:root[data-app-theme='dark'] .user-form .user-float-field > .p-inputtextarea:focus ~ label,
+:root[data-app-theme='dark'] .user-form .user-float-field > .p-inputtextarea.p-filled ~ label,
+:root[data-app-theme='dark'] .user-form .user-float-field > .p-dropdown.p-inputwrapper-focus ~ label,
+:root[data-app-theme='dark'] .user-form .user-float-field > .p-dropdown.p-inputwrapper-filled ~ label,
+:root[data-app-theme='dark'] .user-form .user-float-field > .p-multiselect.p-inputwrapper-focus ~ label,
+:root[data-app-theme='dark'] .user-form .user-float-field > .p-multiselect.p-inputwrapper-filled ~ label,
+:root[data-app-theme='midnight'] .user-form .user-float-field > .p-inputtext:focus ~ label,
+:root[data-app-theme='midnight'] .user-form .user-float-field > .p-inputtext.p-filled ~ label,
+:root[data-app-theme='midnight'] .user-form .user-float-field > .p-inputtextarea:focus ~ label,
+:root[data-app-theme='midnight'] .user-form .user-float-field > .p-inputtextarea.p-filled ~ label,
+:root[data-app-theme='midnight'] .user-form .user-float-field > .p-dropdown.p-inputwrapper-focus ~ label,
+:root[data-app-theme='midnight'] .user-form .user-float-field > .p-dropdown.p-inputwrapper-filled ~ label,
+:root[data-app-theme='midnight'] .user-form .user-float-field > .p-multiselect.p-inputwrapper-focus ~ label,
+:root[data-app-theme='midnight'] .user-form .user-float-field > .p-multiselect.p-inputwrapper-filled ~ label {
+  background: var(--bg-base) !important;
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .status-toggle strong,
+:root[data-app-theme='dark'] .customer-contacts-header h4,
+:root[data-app-theme='dark'] .customer-create-header h2,
+:root[data-app-theme='midnight'] .status-toggle strong,
+:root[data-app-theme='midnight'] .customer-contacts-header h4,
+:root[data-app-theme='midnight'] .customer-create-header h2 {
+  color: var(--text-main) !important;
+}
+
+:root[data-app-theme='dark'] .status-toggle span,
+:root[data-app-theme='dark'] .ticket-status-comment-help,
+:root[data-app-theme='midnight'] .status-toggle span,
+:root[data-app-theme='midnight'] .ticket-status-comment-help {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme='dark'] .customer-contact-row .p-inputtext,
+:root[data-app-theme='dark'] .customer-contact-row .p-dropdown,
+:root[data-app-theme='dark'] .customer-contact-row .p-inputtextarea,
+:root[data-app-theme='dark'] .customer-contact-row .p-disabled,
+:root[data-app-theme='midnight'] .customer-contact-row .p-inputtext,
+:root[data-app-theme='midnight'] .customer-contact-row .p-dropdown,
+:root[data-app-theme='midnight'] .customer-contact-row .p-inputtextarea,
+:root[data-app-theme='midnight'] .customer-contact-row .p-disabled {
+  background: var(--bg-surface-hover) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+  opacity: 1 !important;
+}
+
+:root[data-app-theme='dark'] .project-detail-dialog .p-multiselect-token,
+:root[data-app-theme='dark'] .user-dialog .p-multiselect-token,
+:root[data-app-theme='dark'] .customer-detail-dialog .p-multiselect-token,
+:root[data-app-theme='midnight'] .project-detail-dialog .p-multiselect-token,
+:root[data-app-theme='midnight'] .user-dialog .p-multiselect-token,
+:root[data-app-theme='midnight'] .customer-detail-dialog .p-multiselect-token {
+  background: color-mix(in srgb, var(--table-row-selected-bg) 40%, var(--bg-surface) 60%) !important;
+  border: 1px solid color-mix(in srgb, var(--table-row-selected-bg) 68%, #ffffff 32%) !important;
+  color: #dbe9ff !important;
+}
+
+:root[data-app-theme='dark'] .project-detail-dialog .p-multiselect-token .p-multiselect-token-icon,
+:root[data-app-theme='dark'] .user-dialog .p-multiselect-token .p-multiselect-token-icon,
+:root[data-app-theme='dark'] .customer-detail-dialog .p-multiselect-token .p-multiselect-token-icon,
+:root[data-app-theme='midnight'] .project-detail-dialog .p-multiselect-token .p-multiselect-token-icon,
+:root[data-app-theme='midnight'] .user-dialog .p-multiselect-token .p-multiselect-token-icon,
+:root[data-app-theme='midnight'] .customer-detail-dialog .p-multiselect-token .p-multiselect-token-icon {
+  color: #aecdff !important;
+}
+
+.sprints-carryover-tag {
+  font-size: 11px;
+  font-weight: 700;
 }
