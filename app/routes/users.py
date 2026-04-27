@@ -27,6 +27,7 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), _=Depends(ge
         password_hash=hash_password(payload.password),
         role=payload.role or UserRole.MEMBER,
         theme_preference="light",
+        designation=payload.designation.strip() if payload.designation and payload.designation.strip() else None,
     )
     db.add(user)
     db.commit()
@@ -50,10 +51,18 @@ def update_current_profile(payload: UserSelfUpdate, db: Session = Depends(get_db
     email_owner = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
     if email_owner and email_owner.id != current.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
-    current.name = payload.name
-    current.email = payload.email
-    current.avatar_url = payload.avatar_url.strip() if payload.avatar_url else None
-    if payload.theme_preference is not None:
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data:
+        current.name = payload.name
+    if "email" in data:
+        current.email = payload.email
+    if "avatar_url" in data:
+        current.avatar_url = payload.avatar_url.strip() if payload.avatar_url else None
+    if "github_url" in data:
+        current.github_url = payload.github_url.strip() if payload.github_url and payload.github_url.strip() else None
+    if "linkedin_url" in data:
+        current.linkedin_url = payload.linkedin_url.strip() if payload.linkedin_url and payload.linkedin_url.strip() else None
+    if "theme_preference" in data and payload.theme_preference is not None:
         current.theme_preference = payload.theme_preference
     db.commit()
     db.refresh(current)
@@ -95,6 +104,9 @@ def update_user(user_id: str, payload: UserUpdate, db: Session = Depends(get_db)
     user.avatar_url = payload.avatar_url.strip() if payload.avatar_url else None
     if payload.theme_preference is not None:
         user.theme_preference = payload.theme_preference
+    upd = payload.model_dump(exclude_unset=True)
+    if "designation" in upd:
+        user.designation = payload.designation.strip() if payload.designation and payload.designation.strip() else None
     db.commit()
     db.refresh(user)
     return user

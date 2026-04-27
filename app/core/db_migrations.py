@@ -307,6 +307,126 @@ def apply_ticket_attachment_comment_migration(engine: Engine) -> None:
         logger.warning("Ticket attachment migration failed: %s", exc)
 
 
+def apply_ticket_comment_reactions_migration(engine: Engine) -> None:
+    """Create ticket_comment_reactions table for shared emoji reactions."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for comment reaction migration: %s", exc)
+        return
+
+    if "ticket_comment_reactions" in tables:
+        return
+
+    dialect = engine.dialect.name
+    logger.info("Creating ticket_comment_reactions table")
+    try:
+        with engine.begin() as conn:
+            if dialect == "postgresql":
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE IF NOT EXISTS ticket_comment_reactions (
+                          id UUID PRIMARY KEY,
+                          comment_id UUID NOT NULL REFERENCES ticket_comments(id) ON DELETE CASCADE,
+                          ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                          ticket_cycle_id UUID NULL REFERENCES ticket_cycles(id) ON DELETE SET NULL,
+                          user_id UUID NOT NULL REFERENCES users(id),
+                          emoji VARCHAR(32) NOT NULL,
+                          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                          CONSTRAINT ux_ticket_comment_reactions_unique UNIQUE (comment_id, user_id, emoji)
+                        )
+                        """
+                    )
+                )
+                conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_ticket_comment_reactions_comment_id ON ticket_comment_reactions (comment_id)")
+                )
+                conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_ticket_comment_reactions_user_id ON ticket_comment_reactions (user_id)")
+                )
+            else:
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE ticket_comment_reactions (
+                          id VARCHAR(36) PRIMARY KEY,
+                          comment_id VARCHAR(36) NOT NULL,
+                          ticket_id VARCHAR(36) NOT NULL,
+                          ticket_cycle_id VARCHAR(36) NULL,
+                          user_id VARCHAR(36) NOT NULL,
+                          emoji VARCHAR(32) NOT NULL,
+                          created_at DATETIME NOT NULL,
+                          updated_at DATETIME NOT NULL,
+                          CONSTRAINT ux_ticket_comment_reactions_unique UNIQUE (comment_id, user_id, emoji)
+                        )
+                        """
+                    )
+                )
+    except Exception as exc:
+        logger.warning("Comment reaction migration failed: %s", exc)
+
+
+def apply_ticket_root_reactions_migration(engine: Engine) -> None:
+    """Create ticket_root_reactions table for original message reactions."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for root reaction migration: %s", exc)
+        return
+
+    if "ticket_root_reactions" in tables:
+        return
+
+    dialect = engine.dialect.name
+    logger.info("Creating ticket_root_reactions table")
+    try:
+        with engine.begin() as conn:
+            if dialect == "postgresql":
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE IF NOT EXISTS ticket_root_reactions (
+                          id UUID PRIMARY KEY,
+                          ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+                          user_id UUID NOT NULL REFERENCES users(id),
+                          emoji VARCHAR(32) NOT NULL,
+                          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                          CONSTRAINT ux_ticket_root_reactions_unique UNIQUE (ticket_id, user_id, emoji)
+                        )
+                        """
+                    )
+                )
+                conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_ticket_root_reactions_ticket_id ON ticket_root_reactions (ticket_id)")
+                )
+                conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_ticket_root_reactions_user_id ON ticket_root_reactions (user_id)")
+                )
+            else:
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE ticket_root_reactions (
+                          id VARCHAR(36) PRIMARY KEY,
+                          ticket_id VARCHAR(36) NOT NULL,
+                          user_id VARCHAR(36) NOT NULL,
+                          emoji VARCHAR(32) NOT NULL,
+                          created_at DATETIME NOT NULL,
+                          updated_at DATETIME NOT NULL,
+                          CONSTRAINT ux_ticket_root_reactions_unique UNIQUE (ticket_id, user_id, emoji)
+                        )
+                        """
+                    )
+                )
+    except Exception as exc:
+        logger.warning("Root reaction migration failed: %s", exc)
+
+
 def apply_ticket_public_reference_migration(engine: Engine) -> None:
     """Add tickets.public_reference for SR0001-style ids per project + type."""
     try:
@@ -479,6 +599,50 @@ def apply_user_theme_preference_migration(engine: Engine) -> None:
                 conn.execute(text("UPDATE users SET theme_preference = 'light' WHERE theme_preference IS NULL"))
     except Exception as exc:
         logger.warning("Theme preference migration failed: %s", exc)
+
+
+def apply_user_profile_fields_migration(engine: Engine) -> None:
+    """Add designation (admin) and optional GitHub / LinkedIn URLs for user profiles."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for user profile fields migration: %s", exc)
+        return
+
+    if "users" not in tables:
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("users")}
+    is_pg = engine.dialect.name == "postgresql"
+
+    def add_column(name: str, ddl_pg: str, ddl_sqlite: str) -> None:
+        if name in columns:
+            return
+        try:
+            with engine.begin() as conn:
+                if is_pg:
+                    conn.execute(text(ddl_pg))
+                else:
+                    conn.execute(text(ddl_sqlite))
+        except Exception as exc:
+            logger.warning("Adding users.%s failed: %s", name, exc)
+
+    add_column(
+        "designation",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS designation VARCHAR(120)",
+        "ALTER TABLE users ADD COLUMN designation VARCHAR(120)",
+    )
+    add_column(
+        "github_url",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url VARCHAR(500)",
+        "ALTER TABLE users ADD COLUMN github_url VARCHAR(500)",
+    )
+    add_column(
+        "linkedin_url",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(500)",
+        "ALTER TABLE users ADD COLUMN linkedin_url VARCHAR(500)",
+    )
 
 
 def apply_ticket_overdue_migration(engine: Engine) -> None:

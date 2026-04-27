@@ -27,6 +27,8 @@ from app.models import (
     TicketApprovalRequest,
     TicketAttachment,
     TicketComment,
+    TicketCommentReaction,
+    TicketRootReaction,
     TicketConfiguration,
     TicketHistory,
     User,
@@ -41,6 +43,9 @@ from app.schemas.tickets import (
     TicketAssign,
     TicketAttachmentResponse,
     TicketCommentCreate,
+    TicketCommentReactionSummary,
+    TicketCommentReactionToggle,
+    TicketCommentUpdate,
     TicketCommentResponse,
     TicketCreate,
     TicketDeleteConfirm,
@@ -54,6 +59,72 @@ from app.services.ticket_service import assign_ticket, dedupe_assignee_ids, upda
 from app.utils.access import accessible_project_ids
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
+
+
+def _reaction_summaries_for_comments(
+    db: Session,
+    comment_ids: list[UUID],
+    current_user_id: UUID,
+) -> dict[UUID, list[TicketCommentReactionSummary]]:
+    if not comment_ids:
+        return {}
+    rows = db.execute(
+        select(TicketCommentReaction).where(TicketCommentReaction.comment_id.in_(comment_ids))
+    ).scalars().all()
+    grouped: dict[UUID, dict[str, set[UUID]]] = {}
+    user_ids: set[UUID] = set()
+    for row in rows:
+        comment_map = grouped.setdefault(row.comment_id, {})
+        user_set = comment_map.setdefault(row.emoji, set())
+        user_set.add(row.user_id)
+        user_ids.add(row.user_id)
+    user_name_map: dict[UUID, str] = {}
+    if user_ids:
+        users = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
+        user_name_map = {u.id: u.name for u in users}
+    result: dict[UUID, list[TicketCommentReactionSummary]] = {}
+    for comment_id, emoji_map in grouped.items():
+        summaries = [
+            TicketCommentReactionSummary(
+                emoji=emoji,
+                count=len(user_ids),
+                reacted_by_me=current_user_id in user_ids,
+                reacted_by_names=sorted([user_name_map.get(uid, "Unknown") for uid in user_ids], key=str.lower),
+            )
+            for emoji, user_ids in sorted(emoji_map.items(), key=lambda x: x[0])
+        ]
+        result[comment_id] = summaries
+    return result
+
+
+def _reaction_summary_for_ticket_root(
+    db: Session,
+    ticket_id: UUID,
+    current_user_id: UUID,
+) -> list[TicketCommentReactionSummary]:
+    rows = db.execute(
+        select(TicketRootReaction).where(TicketRootReaction.ticket_id == ticket_id)
+    ).scalars().all()
+    if not rows:
+        return []
+    grouped: dict[str, set[UUID]] = {}
+    user_ids: set[UUID] = set()
+    for row in rows:
+        user_set = grouped.setdefault(row.emoji, set())
+        user_set.add(row.user_id)
+        user_ids.add(row.user_id)
+    user_name_map: dict[UUID, str] = {}
+    users = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
+    user_name_map = {u.id: u.name for u in users}
+    return [
+        TicketCommentReactionSummary(
+            emoji=emoji,
+            count=len(reactors),
+            reacted_by_me=current_user_id in reactors,
+            reacted_by_names=sorted([user_name_map.get(uid, "Unknown") for uid in reactors], key=str.lower),
+        )
+        for emoji, reactors in sorted(grouped.items(), key=lambda x: x[0])
+    ]
 
 
 def _ensure_ticket_access(db: Session, user: User, ticket: Ticket) -> None:
@@ -205,6 +276,32 @@ def _cycle_resolution_to_response(db: Session, r: TicketCycleResolution) -> Reso
     )
 
 
+def _latest_acknowledged_close_approval(
+    db: Session, ticket_id: UUID, cycle_id: UUID
+) -> TicketApprovalRequest | None:
+    """Approval request acknowledged for this ticket cycle (member asked lead to close)."""
+    row = db.execute(
+        select(TicketApprovalRequest)
+        .where(
+            TicketApprovalRequest.ticket_id == ticket_id,
+            TicketApprovalRequest.ticket_cycle_id == cycle_id,
+            TicketApprovalRequest.status == "acknowledged",
+        )
+        .order_by(TicketApprovalRequest.acknowledged_at.desc())
+    ).scalars().first()
+    if row:
+        return row
+    return db.execute(
+        select(TicketApprovalRequest)
+        .where(
+            TicketApprovalRequest.ticket_id == ticket_id,
+            TicketApprovalRequest.ticket_cycle_id.is_(None),
+            TicketApprovalRequest.status == "acknowledged",
+        )
+        .order_by(TicketApprovalRequest.acknowledged_at.desc())
+    ).scalars().first()
+
+
 def _cycle_to_response(db: Session, cycle: TicketCycle) -> TicketCycleResponse:
     return TicketCycleResponse(
         id=cycle.id,
@@ -233,6 +330,19 @@ def _ticket_to_response(db: Session, ticket: Ticket) -> TicketResponse:
         select(TicketCycleResolution).where(TicketCycleResolution.ticket_cycle_id == active_cycle.id)
     ).scalar_one_or_none()
     base = TicketResponse.model_validate(ticket)
+    sprint_title = None
+    if ticket.sprint_id:
+        sprint = db.get(Sprint, ticket.sprint_id)
+        sprint_title = sprint.title if sprint else None
+
+    close_approval_requested_by: UUID | None = None
+    close_approval_requested_by_name: str | None = None
+    if ticket.status == TicketStatus.CLOSED:
+        apr = _latest_acknowledged_close_approval(db, ticket.id, active_cycle.id)
+        if apr:
+            close_approval_requested_by = apr.requested_by
+            close_approval_requested_by_name = _user_name(db, apr.requested_by)
+
     return base.model_copy(
         update={
             "assignee_names": names,
@@ -241,6 +351,9 @@ def _ticket_to_response(db: Session, ticket: Ticket) -> TicketResponse:
             "resolved_by": resolution.resolved_by if resolution else None,
             "resolved_by_name": _user_name(db, resolution.resolved_by) if resolution else None,
             "closed_by_name": _user_name(db, ticket.closed_by) if ticket.closed_by else None,
+            "close_approval_requested_by": close_approval_requested_by,
+            "close_approval_requested_by_name": close_approval_requested_by_name,
+            "sprint_title": sprint_title,
             "current_cycle_id": active_cycle.id,
             "current_cycle_version": active_cycle.version_no,
         }
@@ -270,6 +383,8 @@ def _approval_notification_response(
     ticket_status = ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status)
     return TicketApprovalNotificationResponse(
         notification_id=notification.id,
+        notification_type=notification.type,
+        title=notification.title,
         request_id=request.id if request else None,
         ticket_id=ticket.id,
         ticket_reference=ticket.public_reference,
@@ -279,6 +394,25 @@ def _approval_notification_response(
         requested_by_name=_user_name(db, request.requested_by) if request else None,
         requested_at=request.requested_at if request else notification.created_at,
         is_read=notification.is_read,
+    )
+
+
+def _create_ticket_notification(
+    db: Session,
+    *,
+    recipient_id: UUID,
+    notification_type: str,
+    title: str,
+    ticket_id: UUID,
+) -> None:
+    db.add(
+        Notification(
+            user_id=recipient_id,
+            type=notification_type,
+            title=title,
+            link_url=str(ticket_id),
+            is_read=False,
+        )
     )
 
 
@@ -624,7 +758,13 @@ def list_approval_notifications(db: Session = Depends(get_db), user=Depends(get_
         select(Notification)
         .where(
             Notification.user_id == user.id,
-            Notification.type == "ticket_approval_request",
+            Notification.type.in_(
+                [
+                    "ticket_approval_request",
+                    "ticket_chat_message",
+                    "ticket_comment_reaction",
+                ]
+            ),
         )
         .order_by(Notification.created_at.desc())
     ).scalars().all()
@@ -648,17 +788,41 @@ def list_approval_notifications(db: Session = Depends(get_db), user=Depends(get_
             .where(TicketApprovalRequest.ticket_id == ticket.id)
             .order_by(TicketApprovalRequest.requested_at.desc())
         ).scalars().first()
-        out.append(_approval_notification_response(n, ticket, req, db))
+        if n.type == "ticket_approval_request":
+            out.append(_approval_notification_response(n, ticket, req, db))
+        else:
+            out.append(
+                TicketApprovalNotificationResponse(
+                    notification_id=n.id,
+                    notification_type=n.type,
+                    title=n.title,
+                    request_id=None,
+                    ticket_id=ticket.id,
+                    ticket_reference=ticket.public_reference,
+                    ticket_title=ticket.title,
+                    ticket_status=ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status),
+                    approval_request_status=None,
+                    requested_by_name=None,
+                    requested_at=n.created_at,
+                    is_read=n.is_read,
+                )
+            )
     return out
 
 
 @router.delete("/notifications/approval/all", status_code=status.HTTP_204_NO_CONTENT)
 def delete_all_approval_notifications(db: Session = Depends(get_db), user=Depends(get_current_member)):
-    """Remove every ticket-approval notification for the current user."""
+    """Remove every ticket notification for the current user."""
     db.execute(
         delete(Notification).where(
             Notification.user_id == user.id,
-            Notification.type == "ticket_approval_request",
+            Notification.type.in_(
+                [
+                    "ticket_approval_request",
+                    "ticket_chat_message",
+                    "ticket_comment_reaction",
+                ]
+            ),
         )
     )
     db.commit()
@@ -729,6 +893,7 @@ def list_comments(
     if user.role == UserRole.MEMBER:
         stmt = stmt.where(TicketComment.is_internal.is_(False))
     rows = db.execute(stmt).scalars().all()
+    reaction_map = _reaction_summaries_for_comments(db, [c.id for c in rows], user.id)
     return [
         TicketCommentResponse(
             id=c.id,
@@ -738,6 +903,7 @@ def list_comments(
             author_avatar_url=_user_avatar_url(db, c.author_id),
             body=c.body,
             is_internal=c.is_internal,
+            reactions=reaction_map.get(c.id, []),
             created_at=c.created_at,
             updated_at=c.updated_at,
         )
@@ -768,6 +934,30 @@ def add_comment(
         is_internal=payload.is_internal,
     )
     db.add(row)
+    db.flush()
+    ref = ticket.public_reference or f"#{ticket.ticket_number}"
+    commenter_name = _user_name(db, user.id)
+    participant_ids: set[UUID] = set(ticket.assignee_ids or [])
+    participant_ids.add(ticket.created_by)
+    prior_authors = db.execute(
+        select(TicketComment.author_id).where(
+            TicketComment.ticket_id == ticket.id,
+            TicketComment.ticket_cycle_id == cycle.id,
+        )
+    ).scalars().all()
+    participant_ids.update(prior_authors)
+    participant_ids.discard(user.id)
+    if payload.is_internal and participant_ids:
+        eligible_users = db.execute(select(User).where(User.id.in_(participant_ids))).scalars().all()
+        participant_ids = {u.id for u in eligible_users if u.role in {UserRole.ADMIN, UserRole.LEAD}}
+    for recipient_id in participant_ids:
+        _create_ticket_notification(
+            db,
+            recipient_id=recipient_id,
+            notification_type="ticket_chat_message",
+            title=f"{commenter_name} commented on {ref}",
+            ticket_id=ticket.id,
+        )
     db.commit()
     db.refresh(row)
     return TicketCommentResponse(
@@ -778,9 +968,153 @@ def add_comment(
         author_avatar_url=_user_avatar_url(db, row.author_id),
         body=row.body,
         is_internal=row.is_internal,
+        reactions=[],
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+@router.patch("/{ticket_id}/comments/{comment_id}", response_model=TicketCommentResponse)
+def edit_comment(
+    ticket_id: str,
+    comment_id: UUID,
+    payload: TicketCommentUpdate,
+    cycle_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_member),
+):
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    _ensure_ticket_access(db, user, ticket)
+    cycle = _resolve_cycle(db, ticket, cycle_id, require_active=True)
+    comment = db.get(TicketComment, comment_id)
+    if not comment or comment.ticket_id != ticket.id or comment.ticket_cycle_id != cycle.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found for this ticket")
+    if comment.author_id != user.id and user.role == UserRole.MEMBER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can edit only your own comments")
+    comment.body = payload.body.strip()
+    db.commit()
+    db.refresh(comment)
+    return TicketCommentResponse(
+        id=comment.id,
+        ticket_id=comment.ticket_id,
+        author_id=comment.author_id,
+        author_name=_user_name(db, comment.author_id),
+        author_avatar_url=_user_avatar_url(db, comment.author_id),
+        body=comment.body,
+        is_internal=comment.is_internal,
+        reactions=_reaction_summaries_for_comments(db, [comment.id], user.id).get(comment.id, []),
+        created_at=comment.created_at,
+        updated_at=comment.updated_at,
+    )
+
+
+@router.post("/{ticket_id}/comments/{comment_id}/reactions", response_model=list[TicketCommentReactionSummary])
+def toggle_comment_reaction(
+    ticket_id: str,
+    comment_id: UUID,
+    payload: TicketCommentReactionToggle,
+    cycle_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_member),
+):
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    _ensure_ticket_access(db, user, ticket)
+    cycle = _resolve_cycle(db, ticket, cycle_id)
+    comment = db.get(TicketComment, comment_id)
+    if not comment or comment.ticket_id != ticket.id or comment.ticket_cycle_id != cycle.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found for this ticket")
+    emoji = payload.emoji.strip()
+    if not emoji:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Emoji is required")
+    existing = db.execute(
+        select(TicketCommentReaction).where(
+            TicketCommentReaction.comment_id == comment.id,
+            TicketCommentReaction.user_id == user.id,
+            TicketCommentReaction.emoji == emoji,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        db.delete(existing)
+    else:
+        db.add(
+            TicketCommentReaction(
+                comment_id=comment.id,
+                ticket_id=ticket.id,
+                ticket_cycle_id=cycle.id,
+                user_id=user.id,
+                emoji=emoji,
+            )
+        )
+        if comment.author_id != user.id:
+            reactor_name = _user_name(db, user.id)
+            ref = ticket.public_reference or f"#{ticket.ticket_number}"
+            _create_ticket_notification(
+                db,
+                recipient_id=comment.author_id,
+                notification_type="ticket_comment_reaction",
+                title=f"{reactor_name} reacted {emoji} on {ref}",
+                ticket_id=ticket.id,
+            )
+    db.commit()
+    return _reaction_summaries_for_comments(db, [comment.id], user.id).get(comment.id, [])
+
+
+@router.get("/{ticket_id}/reactions/root", response_model=list[TicketCommentReactionSummary])
+def list_ticket_root_reactions(ticket_id: str, db: Session = Depends(get_db), user=Depends(get_current_member)):
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    _ensure_ticket_access(db, user, ticket)
+    return _reaction_summary_for_ticket_root(db, ticket.id, user.id)
+
+
+@router.post("/{ticket_id}/reactions/root", response_model=list[TicketCommentReactionSummary])
+def toggle_ticket_root_reaction(
+    ticket_id: str,
+    payload: TicketCommentReactionToggle,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_member),
+):
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    _ensure_ticket_access(db, user, ticket)
+    emoji = payload.emoji.strip()
+    if not emoji:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Emoji is required")
+    existing = db.execute(
+        select(TicketRootReaction).where(
+            TicketRootReaction.ticket_id == ticket.id,
+            TicketRootReaction.user_id == user.id,
+            TicketRootReaction.emoji == emoji,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        db.delete(existing)
+    else:
+        db.add(
+            TicketRootReaction(
+                ticket_id=ticket.id,
+                user_id=user.id,
+                emoji=emoji,
+            )
+        )
+        if ticket.created_by != user.id:
+            reactor_name = _user_name(db, user.id)
+            ref = ticket.public_reference or f"#{ticket.ticket_number}"
+            _create_ticket_notification(
+                db,
+                recipient_id=ticket.created_by,
+                notification_type="ticket_comment_reaction",
+                title=f"{reactor_name} reacted {emoji} on {ref}",
+                ticket_id=ticket.id,
+            )
+    db.commit()
+    return _reaction_summary_for_ticket_root(db, ticket.id, user.id)
 
 
 @router.get("/{ticket_id}/history", response_model=list[TicketHistoryResponse])

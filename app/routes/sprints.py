@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.constants.enums import UserRole
@@ -56,10 +56,27 @@ def _is_planning_sprint(row: Sprint) -> bool:
     return (row.status or "").strip().lower() == "planning"
 
 
-def _member_can_view_sprint(user: User, row: Sprint) -> bool:
+def _member_assigned_in_sprint(db: Session, user: User, sprint_id: UUID) -> bool:
     if user.role != UserRole.MEMBER:
         return True
-    return _is_active_sprint(row) or _is_planning_sprint(row)
+    tickets = db.execute(
+        select(Ticket).where(
+            or_(
+                Ticket.sprint_id == sprint_id,
+                Ticket.carried_from_sprint_id == sprint_id,
+            )
+        )
+    ).scalars().all()
+    for t in tickets:
+        if user.id in (t.assignee_ids or []):
+            return True
+    return False
+
+
+def _member_can_view_sprint(db: Session, user: User, row: Sprint) -> bool:
+    if user.role != UserRole.MEMBER:
+        return True
+    return _is_active_sprint(row) or _is_planning_sprint(row) or _member_assigned_in_sprint(db, user, row.id)
 
 
 def _validate_projects(db: Session, user: User, project_ids: list[UUID]) -> None:
@@ -84,12 +101,14 @@ def list_sprints(db: Session = Depends(get_db), user: User = Depends(get_current
         if any(p in allowed for p in r.project_ids):
             out.append(r)
     if user.role == UserRole.MEMBER:
-        out = [r for r in out if _is_active_sprint(r) or _is_planning_sprint(r)]
+        out = [r for r in out if _is_active_sprint(r) or _is_planning_sprint(r) or _member_assigned_in_sprint(db, user, r.id)]
         active_rows = [r for r in out if _is_active_sprint(r)]
         planning_rows = [r for r in out if _is_planning_sprint(r)]
+        prior_rows = [r for r in out if not _is_active_sprint(r) and not _is_planning_sprint(r)]
         active_rows.sort(key=lambda r: r.start_date, reverse=True)
         planning_rows.sort(key=lambda r: r.start_date, reverse=True)
-        out = active_rows + planning_rows
+        prior_rows.sort(key=lambda r: r.start_date, reverse=True)
+        out = active_rows + planning_rows + prior_rows
     return [_to_response(db, r) for r in out]
 
 
@@ -102,10 +121,10 @@ def get_sprint(sprint_id: UUID, db: Session = Depends(get_db), user: User = Depe
         allowed = accessible_project_ids(db, user)
         if row.project_ids and not any(p in allowed for p in row.project_ids):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this sprint")
-    if not _member_can_view_sprint(user, row):
+    if not _member_can_view_sprint(db, user, row):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Team members can only view active or planning sprints",
+            detail="No access to this sprint",
         )
     return _to_response(db, row)
 
@@ -115,17 +134,28 @@ def sprint_analytics(sprint_id: UUID, db: Session = Depends(get_db), user: User 
     row = db.get(Sprint, sprint_id)
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sprint not found")
+    allowed_projects: set[UUID] | None = None
     if user.role != UserRole.ADMIN:
-        allowed = accessible_project_ids(db, user)
-        if row.project_ids and not any(p in allowed for p in row.project_ids):
+        allowed_projects = accessible_project_ids(db, user)
+        if row.project_ids and not any(p in allowed_projects for p in row.project_ids):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this sprint")
-    if not _member_can_view_sprint(user, row):
+    if not _member_can_view_sprint(db, user, row):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Team members can only view active or planning sprints",
+            detail="No access to this sprint",
         )
 
-    tickets = db.execute(select(Ticket).where(Ticket.sprint_id == sprint_id)).scalars().all()
+    tickets = db.execute(
+        select(Ticket).where(
+            or_(
+                Ticket.sprint_id == sprint_id,
+                Ticket.carried_from_sprint_id == sprint_id,
+            )
+        )
+    ).scalars().all()
+    if allowed_projects is not None:
+        # In multi-project sprints, members must only see tickets from projects they belong to.
+        tickets = [t for t in tickets if t.project_id in allowed_projects]
     by_status: dict[str, int] = {}
     for t in tickets:
         k = t.status.value if hasattr(t.status, "value") else str(t.status)
@@ -154,10 +184,16 @@ def sprint_analytics(sprint_id: UUID, db: Session = Depends(get_db), user: User 
     if carried_from_ids:
         carried_from_sprints = db.execute(select(Sprint).where(Sprint.id.in_(carried_from_ids))).scalars().all()
         carried_from_title_by_id = {s.id: s.title for s in carried_from_sprints}
+    carried_to_ids = {t.sprint_id for t in tickets if t.carried_from_sprint_id == sprint_id and t.sprint_id}
+    carried_to_title_by_id: dict[UUID, str] = {}
+    if carried_to_ids:
+        carried_to_sprints = db.execute(select(Sprint).where(Sprint.id.in_(carried_to_ids))).scalars().all()
+        carried_to_title_by_id = {s.id: s.title for s in carried_to_sprints}
     for t in tickets:
         st = t.status.value if hasattr(t.status, "value") else str(t.status)
         pr = t.priority.value if hasattr(t.priority, "value") else str(t.priority)
         names = [user_map[aid] for aid in (t.assignee_ids or []) if aid in user_map]
+        carried_to_id = t.sprint_id if t.carried_from_sprint_id == sprint_id else None
         brief_list.append(
             SprintTicketBrief(
                 id=t.id,
@@ -168,6 +204,8 @@ def sprint_analytics(sprint_id: UUID, db: Session = Depends(get_db), user: User 
                 assignee_names=names,
                 carried_from_sprint_id=t.carried_from_sprint_id,
                 carried_from_sprint_title=carried_from_title_by_id.get(t.carried_from_sprint_id) if t.carried_from_sprint_id else None,
+                carried_to_sprint_id=carried_to_id,
+                carried_to_sprint_title=carried_to_title_by_id.get(carried_to_id) if carried_to_id else None,
                 carryover_count=int(t.carryover_count or 0),
             )
         )

@@ -45,6 +45,7 @@ type CalendarEventsTableProps = {
   viewKey: string;
   rows: CalendarEventRecord[];
   isLoading: boolean;
+  canCreateEvents: boolean;
   canManageEvents: boolean;
   projects: ProjectRecord[];
   onActivitySaved: () => void;
@@ -54,6 +55,7 @@ export function CalendarEventsTable({
   viewKey,
   rows,
   isLoading,
+  canCreateEvents,
   canManageEvents,
   projects,
   onActivitySaved,
@@ -90,7 +92,11 @@ export function CalendarEventsTable({
           sortOrder={-1}
           removableSort
           className="user-table calendar-events-activities-table"
-          emptyMessage="No activities yet. Team leads and admins can add them from the Calendar module."
+          emptyMessage={
+            canCreateEvents
+              ? 'No activities yet. Add one from the Calendar grid (Add activity), or ask your team lead.'
+              : 'No activities yet.'
+          }
           dataKey="id"
           rowClassName={(row: CalendarEventRecord) =>
             row.status === 'completed' ? 'calendar-events-row-completed' : ''

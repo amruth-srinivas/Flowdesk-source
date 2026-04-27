@@ -28,10 +28,14 @@ type UserManagementSectionProps = {
   onCloseUserDialog: () => void;
   handleCreateUser: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   handleEditUser: (event: FormEvent<HTMLFormElement>) => Promise<void>;
-  createForm: { employeeId: string; name: string; email: string; password: string; role: BackendRole | '' };
-  editForm: { employeeId: string; name: string; email: string; role: BackendRole; isActive: boolean };
-  setCreateForm: Dispatch<SetStateAction<{ employeeId: string; name: string; email: string; password: string; role: BackendRole | '' }>>;
-  setEditForm: Dispatch<SetStateAction<{ id: string; employeeId: string; name: string; email: string; role: BackendRole; isActive: boolean }>>;
+  createForm: { employeeId: string; name: string; email: string; password: string; role: BackendRole | ''; designation: string };
+  editForm: { employeeId: string; name: string; email: string; role: BackendRole; isActive: boolean; designation: string };
+  setCreateForm: Dispatch<
+    SetStateAction<{ employeeId: string; name: string; email: string; password: string; role: BackendRole | ''; designation: string }>
+  >;
+  setEditForm: Dispatch<
+    SetStateAction<{ id: string; employeeId: string; name: string; email: string; role: BackendRole; isActive: boolean; designation: string }>
+  >;
   showCreatePassword: boolean;
   setShowCreatePassword: (updater: (current: boolean) => boolean) => void;
   optionalRoleOptions: Array<{ label: string; value: string }>;
@@ -115,6 +119,11 @@ export function UserManagementSection(props: UserManagementSectionProps) {
           emptyMessage="No users found."
         >
           <Column field="name" header="Name" body={(user: UserRecord) => <div className="user-name-cell"><strong>{user.name}</strong><span>{user.employee_id}</span></div>} />
+          <Column
+            field="designation"
+            header="Designation"
+            body={(user: UserRecord) => <span className="muted-cell">{user.designation?.trim() ? user.designation : '—'}</span>}
+          />
           <Column field="email" header="Email" body={(user: UserRecord) => <span className="muted-cell">{user.email}</span>} />
           <Column field="role" header="Role" body={(user: UserRecord) => renderRoleTag(user.role)} />
           <Column field="is_active" header="Status" body={(user: UserRecord) => <Tag value={user.is_active ? 'Active' : 'Inactive'} severity={user.is_active ? 'success' : 'secondary'} rounded />} />
@@ -136,6 +145,7 @@ export function UserManagementSection(props: UserManagementSectionProps) {
           <div className="form-grid">
             <div className="p-inputgroup"><span className="p-inputgroup-addon"><i className="pi pi-id-card" /></span><FloatLabel className="user-float-field"><InputText id="user-employee-id" value={dialogMode === 'create' ? createForm.employeeId : editForm.employeeId} onChange={(event) => dialogMode === 'create' ? setCreateForm((current) => ({ ...current, employeeId: event.target.value })) : setEditForm((current) => ({ ...current, employeeId: event.target.value }))} /><label htmlFor="user-employee-id">Employee ID</label></FloatLabel></div>
             <div className="p-inputgroup"><span className="p-inputgroup-addon"><i className="pi pi-user" /></span><FloatLabel className="user-float-field"><InputText id="user-name" value={dialogMode === 'create' ? createForm.name : editForm.name} onChange={(event) => dialogMode === 'create' ? setCreateForm((current) => ({ ...current, name: event.target.value })) : setEditForm((current) => ({ ...current, name: event.target.value }))} /><label htmlFor="user-name">Full name</label></FloatLabel></div>
+            <div className="p-inputgroup"><span className="p-inputgroup-addon"><i className="pi pi-bookmark" /></span><FloatLabel className="user-float-field"><InputText id="user-designation" value={dialogMode === 'create' ? createForm.designation : editForm.designation} onChange={(event) => dialogMode === 'create' ? setCreateForm((current) => ({ ...current, designation: event.target.value })) : setEditForm((current) => ({ ...current, designation: event.target.value }))} /><label htmlFor="user-designation">Designation</label></FloatLabel></div>
             <div className="p-inputgroup"><span className="p-inputgroup-addon"><Mail size={16} /></span><FloatLabel className="user-float-field"><InputText id="user-email" value={dialogMode === 'create' ? createForm.email : editForm.email} onChange={(event) => dialogMode === 'create' ? setCreateForm((current) => ({ ...current, email: event.target.value })) : setEditForm((current) => ({ ...current, email: event.target.value }))} /><label htmlFor="user-email">Email address</label></FloatLabel></div>
             {dialogMode === 'create' ? <div className="p-inputgroup"><span className="p-inputgroup-addon"><KeyRound size={16} /></span><FloatLabel className="user-float-field"><InputText id="user-password" type={showCreatePassword ? 'text' : 'password'} value={createForm.password} onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))} /><label htmlFor="user-password">Temporary password</label></FloatLabel><button type="button" className="password-toggle-btn" onClick={() => setShowCreatePassword((current) => !current)} aria-label={showCreatePassword ? 'Hide password' : 'Show password'}><i className={showCreatePassword ? 'pi pi-eye-slash' : 'pi pi-eye'} /></button></div> : null}
             <div className="p-inputgroup"><span className="p-inputgroup-addon"><i className="pi pi-briefcase" /></span><FloatLabel className="user-float-field"><Dropdown id="user-role" value={dialogMode === 'create' ? createForm.role : editForm.role} options={dialogMode === 'create' ? optionalRoleOptions : backendRoleOptions} onChange={(event) => dialogMode === 'create' ? setCreateForm((current) => ({ ...current, role: event.value as BackendRole | '' })) : setEditForm((current) => ({ ...current, role: event.value as BackendRole }))} className="full-width" /><label htmlFor="user-role">{dialogMode === 'create' ? 'Workspace role (optional)' : 'Workspace role'}</label></FloatLabel></div>

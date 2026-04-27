@@ -75,6 +75,7 @@ type CalendarDayDetailPanelProps = {
   selectedDate: Date | null;
   dayEvents: CalendarEventRecord[];
   isLoading: boolean;
+  canCreateEvents: boolean;
   canManageEvents: boolean;
   focusedEventId: string | null;
   milestoneBusy: string | null;
@@ -90,6 +91,7 @@ export function CalendarDayDetailPanel({
   selectedDate,
   dayEvents,
   isLoading,
+  canCreateEvents,
   canManageEvents,
   focusedEventId,
   milestoneBusy,
@@ -493,7 +495,7 @@ export function CalendarDayDetailPanel({
           <div className="calendar-detail-panel-empty">
             <i className="pi pi-calendar-plus" aria-hidden />
             <p>No activities scheduled for this day.</p>
-            {canManageEvents && onAddActivity ? (
+            {canCreateEvents && onAddActivity ? (
               <Button
                 type="button"
                 label="Add activity"

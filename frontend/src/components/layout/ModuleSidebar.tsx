@@ -21,6 +21,9 @@ const moduleIconMap: Record<string, string> = {
   Documents: 'https://img.icons8.com/fluency-systems-regular/24/documents.png',
   Monitoring: 'https://img.icons8.com/fluency-systems-regular/24/monitor.png',
   'Personal Tasks': 'https://img.icons8.com/fluency-systems-regular/24/task.png',
+  'Active Sprint': 'https://img.icons8.com/fluency-systems-regular/24/goal.png',
+  Sprints: 'https://img.icons8.com/fluency-systems-regular/24/combo-chart--v1.png',
+  Inbox: 'https://img.icons8.com/fluency-systems-regular/24/chat.png',
 };
 
 export function ModuleSidebar({

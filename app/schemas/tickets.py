@@ -78,7 +78,10 @@ class TicketResponse(BaseModel):
     resolved_by_name: str | None = None
     closed_by: UUID | None = None
     closed_by_name: str | None = None
+    close_approval_requested_by: UUID | None = None
+    close_approval_requested_by_name: str | None = None
     sprint_id: UUID | None = None
+    sprint_title: str | None = None
     carried_from_sprint_id: UUID | None = None
     carried_over_at: datetime | None = None
     carryover_count: int = 0
@@ -108,6 +111,21 @@ class TicketCommentCreate(BaseModel):
     is_internal: bool = False
 
 
+class TicketCommentUpdate(BaseModel):
+    body: str = Field(..., min_length=1, max_length=8000)
+
+
+class TicketCommentReactionToggle(BaseModel):
+    emoji: str = Field(..., min_length=1, max_length=16)
+
+
+class TicketCommentReactionSummary(BaseModel):
+    emoji: str
+    count: int
+    reacted_by_me: bool = False
+    reacted_by_names: list[str] = Field(default_factory=list)
+
+
 class TicketCommentResponse(BaseModel):
     id: UUID
     ticket_id: UUID
@@ -116,6 +134,7 @@ class TicketCommentResponse(BaseModel):
     author_avatar_url: str | None = None
     body: str
     is_internal: bool
+    reactions: list[TicketCommentReactionSummary] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -189,6 +208,8 @@ class TicketApprovalRequestResponse(BaseModel):
 
 class TicketApprovalNotificationResponse(BaseModel):
     notification_id: UUID
+    notification_type: str | None = None
+    title: str | None = None
     request_id: UUID | None = None
     ticket_id: UUID
     ticket_reference: str | None = None

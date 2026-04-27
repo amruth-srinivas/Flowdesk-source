@@ -13,6 +13,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     role: UserRole | None = None
+    designation: str | None = None
 
 
 class UserUpdate(BaseModel):
@@ -23,6 +24,7 @@ class UserUpdate(BaseModel):
     is_active: bool = True
     avatar_url: str | None = None
     theme_preference: Literal["light", "dark", "midnight"] | None = None
+    designation: str | None = None
 
 
 class UserSelfUpdate(BaseModel):
@@ -30,6 +32,8 @@ class UserSelfUpdate(BaseModel):
     email: EmailStr
     avatar_url: str | None = None
     theme_preference: Literal["light", "dark", "midnight"] | None = None
+    github_url: str | None = None
+    linkedin_url: str | None = None
 
 
 class UserUpdateRole(BaseModel):
@@ -49,6 +53,9 @@ class UserResponse(BaseModel):
     is_active: bool
     avatar_url: str | None = None
     theme_preference: Literal["light", "dark", "midnight"] = "light"
+    designation: str | None = None
+    github_url: str | None = None
+    linkedin_url: str | None = None
     created_at: datetime
 
     class Config:

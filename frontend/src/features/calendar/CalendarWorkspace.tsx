@@ -11,7 +11,9 @@ type CalendarWorkspaceProps = {
   viewKey: string;
   events: CalendarEventRecord[];
   isLoading: boolean;
-  /** Admins and team leads can add/edit activities and toggle milestones. */
+  /** Team members (and leads/admins) can create activities for projects they belong to. */
+  canCreateEvents: boolean;
+  /** Admins and team leads can edit activities, toggle milestones, and manage attachments. */
   canManageEvents: boolean;
   projects: ProjectRecord[];
   onToggleMilestone: (eventId: string, milestoneId: string, completed: boolean) => Promise<void>;
@@ -23,6 +25,7 @@ export function CalendarWorkspace({
   viewKey,
   events,
   isLoading,
+  canCreateEvents,
   canManageEvents,
   projects,
   onToggleMilestone,
@@ -79,7 +82,7 @@ export function CalendarWorkspace({
         <div>
           <h3 className="calendar-kicker">Calendar</h3>
         </div>
-        {canManageEvents ? (
+        {canCreateEvents ? (
           <Button
             type="button"
             label="Add activity"
@@ -107,18 +110,19 @@ export function CalendarWorkspace({
             selectedDate={selectedDate}
             dayEvents={dayEvents}
             isLoading={isLoading}
+            canCreateEvents={canCreateEvents}
             canManageEvents={canManageEvents}
             focusedEventId={focusedEventId}
             milestoneBusy={milestoneBusy}
             onClose={clearSelection}
             onToggleMilestone={handleMilestoneToggle}
-            onAddActivity={canManageEvents ? () => openAddDialog(selectedDate) : undefined}
+            onAddActivity={canCreateEvents ? () => openAddDialog(selectedDate) : undefined}
             onAttachmentsChanged={onCreated}
           />
         </aside>
       </div>
 
-      {canManageEvents ? (
+      {canCreateEvents ? (
         <Dialog
           header="Add activity"
           visible={addOpen}

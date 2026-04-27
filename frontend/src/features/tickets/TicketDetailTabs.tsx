@@ -5,7 +5,9 @@ import { Dropdown } from 'primereact/dropdown';
 import { Editor } from 'primereact/editor';
 import { TabPanel, TabView } from 'primereact/tabview';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import EmojiPicker, { Emoji, EmojiStyle, Theme, type EmojiClickData } from 'emoji-picker-react';
+import { Pencil, Smile, SmilePlus } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getTicketAttachmentBlobRequest,
   downloadTicketAttachmentFile,
@@ -13,8 +15,12 @@ import {
   getTicketCommentsRequest,
   getTicketCyclesRequest,
   getTicketHistoryRequest,
+  getTicketRootReactionsRequest,
   getTicketResolutionRequest,
+  patchTicketCommentRequest,
   postTicketCommentRequest,
+  toggleTicketCommentReactionRequest,
+  toggleTicketRootReactionRequest,
   putTicketResolutionRequest,
   uploadTicketAttachmentRequest,
   type ResolutionRecord,
@@ -40,6 +46,10 @@ function formatWhen(iso: string): string {
 
 function plainTextFromHtml(html: string): string {
   return html
+    .replace(/<span[^>]*data-emoji-image="true"[^>]*>(.*?)<\/span>/gi, ' $1 ')
+    .replace(/<img[^>]*data-emoji-image="true"[^>]*alt="([^"]*)"[^>]*>/gi, ' $1 ')
+    .replace(/<img[^>]*data-emoji-image="true"[^>]*alt="([^"]*)"[^>]*>/gi, ' $1 ')
+    .replace(/<img[^>]*alt="([^"]*)"[^>]*>/gi, ' $1 ')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
@@ -80,9 +90,11 @@ function initials(name: string): string {
   return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 }
 
-function cycleStatusLabel(status: string): string {
+function cycleStatusLabel(status: string, versionNo?: number): string {
   const normalized = status.toLowerCase().trim();
-  if (normalized === 'open') return 'Reopened';
+  if (normalized === 'open') {
+    return versionNo && versionNo > 1 ? 'Reopened' : 'Open';
+  }
   return humanize(normalized);
 }
 
@@ -128,21 +140,20 @@ const resolutionEditorHeaderTemplate = (
   </>
 );
 
-const conversationEditorHeaderTemplate = (
-  <>
-    <span className="ql-formats">
-      <button className="ql-bold" aria-label="Bold" />
-      <button className="ql-italic" aria-label="Italic" />
-      <button className="ql-underline" aria-label="Underline" />
-    </span>
-    <span className="ql-formats">
-      <button className="ql-list" value="ordered" aria-label="Numbered list" />
-      <button className="ql-list" value="bullet" aria-label="Bullet list" />
-      <button className="ql-link" aria-label="Insert link" />
-      <button className="ql-clean" aria-label="Clear formatting" />
-    </span>
-  </>
-);
+const QUICK_REACTIONS = [
+  { emoji: '👍', unified: '1f44d' },
+  { emoji: '❤️', unified: '2764-fe0f' },
+  { emoji: '😂', unified: '1f602' },
+  { emoji: '😮', unified: '1f62e' },
+  { emoji: '👏', unified: '1f44f' },
+];
+
+function emojiToUnified(emoji: string): string {
+  return Array.from(emoji)
+    .map((char) => char.codePointAt(0)?.toString(16))
+    .filter((value): value is string => Boolean(value))
+    .join('-');
+}
 
 type TicketDetailTabsProps = {
   viewKey: string;
@@ -191,6 +202,17 @@ export function TicketDetailTabs({
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [attachmentPreviewUrls, setAttachmentPreviewUrls] = useState<Record<string, string>>({});
   const [mediaPreview, setMediaPreview] = useState<{ kind: 'image' | 'video'; url: string; name: string; attachmentId: string } | null>(null);
+  const [reactionsByItem, setReactionsByItem] = useState<
+    Record<string, Array<{ emoji: string; count: number; reacted_by_me: boolean; reacted_by_names?: string[] }>>
+  >({});
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const [expandedReactionId, setExpandedReactionId] = useState<string | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentHtml, setEditingCommentHtml] = useState('');
+  const [savingCommentEdit, setSavingCommentEdit] = useState(false);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const composerEditorRef = useRef<Editor | null>(null);
+  const editEditorRef = useRef<Editor | null>(null);
 
   const selectedCycle = useMemo(
     () => cycles.find((cycle) => cycle.id === selectedCycleId) ?? null,
@@ -200,10 +222,10 @@ export function TicketDetailTabs({
   const cycleOptions = useMemo(
     () =>
       cycles.map((cycle) => ({
-        label: `V${cycle.version_no} • ${cycleStatusLabel(cycle.status)}`,
+        label: `V${cycle.version_no} • ${cycleStatusLabel(cycle.status, cycle.version_no)}`,
         value: cycle.id,
         version: cycle.version_no,
-        statusLabel: cycleStatusLabel(cycle.status),
+        statusLabel: cycleStatusLabel(cycle.status, cycle.version_no),
         statusKey: String(cycle.status ?? '').toLowerCase().replace(/\s+/g, '_'),
       })),
     [cycles],
@@ -226,6 +248,12 @@ export function TicketDetailTabs({
         setSelectedCycleId(defaultCycle);
       }
       setComments(c);
+      setReactionsByItem(() =>
+        Object.fromEntries([
+          [`orig-${ticket.id}`, [] as Array<{ emoji: string; count: number; reacted_by_me: boolean; reacted_by_names?: string[] }>],
+          ...c.map((comment) => [`comment-${comment.id}`, comment.reactions ?? []]),
+        ]),
+      );
       setHistory(h);
       setAttachments(a);
       if (r) {
@@ -240,6 +268,12 @@ export function TicketDetailTabs({
         setResolutionSteps('');
       }
       setResolutionLoaded(true);
+      try {
+        const rootReactions = await getTicketRootReactionsRequest(ticket.id);
+        setReactionsByItem((current) => ({ ...current, [`orig-${ticket.id}`]: rootReactions }));
+      } catch {
+        // Root reactions are optional for older servers; keep normal thread loading intact.
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load ticket details');
     } finally {
@@ -268,6 +302,44 @@ export function TicketDetailTabs({
       Object.values(attachmentPreviewUrls).forEach((url) => URL.revokeObjectURL(url));
     };
   }, [attachmentPreviewUrls]);
+
+  useEffect(() => {
+    setEditingCommentId(null);
+    setEditingCommentHtml('');
+    setSavingCommentEdit(false);
+    setIsEmojiPickerOpen(false);
+  }, [ticket.id, selectedCycleId]);
+
+  const conversationEditorHeaderTemplate = useMemo(
+    () => (
+      <>
+        <span className="ql-formats">
+          <button className="ql-bold" aria-label="Bold" />
+          <button className="ql-italic" aria-label="Italic" />
+          <button className="ql-underline" aria-label="Underline" />
+          <button
+            type="button"
+            className="ticket-editor-emoji-btn ql-emoji"
+            aria-label="Insert emoji"
+            title="Emoji"
+            onClick={(event) => {
+              event.preventDefault();
+              setIsEmojiPickerOpen((current) => !current);
+            }}
+          >
+            <Smile size={17} strokeWidth={2.35} />
+          </button>
+        </span>
+        <span className="ql-formats">
+          <button className="ql-list" value="ordered" aria-label="Numbered list" />
+          <button className="ql-list" value="bullet" aria-label="Bullet list" />
+          <button className="ql-link" aria-label="Insert link" />
+          <button className="ql-clean" aria-label="Clear formatting" />
+        </span>
+      </>
+    ),
+    [],
+  );
 
   useEffect(() => {
     const media = attachments.filter(
@@ -328,6 +400,7 @@ export function TicketDetailTabs({
       setNewComment('');
       setInternalNote(false);
       setPendingFiles([]);
+      setIsEmojiPickerOpen(false);
       await reloadThread();
       onThreadChanged();
     } catch (e) {
@@ -392,6 +465,74 @@ export function TicketDetailTabs({
 
   function openMediaPreview(kind: 'image' | 'video', url: string, name: string, attachmentId: string) {
     setMediaPreview({ kind, url, name, attachmentId });
+  }
+
+  async function toggleReaction(itemId: string, commentId: string | null, emoji: string) {
+    try {
+      const reactions = commentId
+        ? await toggleTicketCommentReactionRequest(
+            ticket.id,
+            commentId,
+            emoji,
+            { cycle_id: selectedCycleId ?? undefined },
+          )
+        : await toggleTicketRootReactionRequest(ticket.id, emoji);
+      setReactionsByItem((current) => ({ ...current, [itemId]: reactions }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not update reaction');
+    }
+  }
+
+  function handleReactionEmojiSelect(itemId: string, commentId: string | null, emojiData: EmojiClickData) {
+    void toggleReaction(itemId, commentId, emojiData.emoji);
+    setExpandedReactionId(null);
+  }
+
+  async function handleSaveCommentEdit() {
+    if (!editingCommentId) return;
+    const plain = plainTextFromHtml(editingCommentHtml);
+    if (!plain) {
+      setError('Comment cannot be empty.');
+      return;
+    }
+    setSavingCommentEdit(true);
+    setError('');
+    try {
+      await patchTicketCommentRequest(
+        ticket.id,
+        editingCommentId,
+        { body: editingCommentHtml },
+        { cycle_id: selectedCycleId ?? undefined },
+      );
+      setEditingCommentId(null);
+      setEditingCommentHtml('');
+      await reloadThread();
+      onThreadChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not edit comment');
+    } finally {
+      setSavingCommentEdit(false);
+    }
+  }
+
+  function handleEmojiSelect(emojiData: EmojiClickData) {
+    const emojiImageUrl = emojiData.getImageUrl(EmojiStyle.APPLE).replaceAll('"', '&quot;');
+    const emojiText = escapeHtml(emojiData.emoji);
+    const emojiImageHtml = `<img src="${emojiImageUrl}" alt="${emojiText}" class="ticket-inline-emoji" data-emoji-image="true" />&nbsp;`;
+    const targetEditor = editingCommentId ? editEditorRef.current : composerEditorRef.current;
+    const targetSetter = editingCommentId ? setEditingCommentHtml : setNewComment;
+    const quill = targetEditor?.getQuill?.();
+
+    if (quill) {
+      const range = quill.getSelection(true);
+      const insertAt = range ? range.index : quill.getLength();
+      quill.clipboard.dangerouslyPasteHTML(insertAt, emojiImageHtml, 'user');
+      quill.setSelection(insertAt + 2, 0, 'silent');
+      targetSetter((quill.root.innerHTML ?? '').slice(0, 12000));
+      return;
+    }
+
+    targetSetter((current) => `${current}${emojiImageHtml}`);
   }
 
   type TimelineItem = {
@@ -464,6 +605,7 @@ export function TicketDetailTabs({
       [
         {
           id: `orig-${ticket.id}`,
+          commentId: null as string | null,
           userId: ticket.created_by,
           author: ticket.created_by_name ?? 'Requester',
           authorAvatarUrl: ticket.created_by_avatar_url,
@@ -474,6 +616,7 @@ export function TicketDetailTabs({
         },
         ...comments.map((c) => ({
           id: `comment-${c.id}`,
+          commentId: c.id,
           userId: c.author_id,
           author: c.author_name,
           authorAvatarUrl: c.author_avatar_url,
@@ -578,6 +721,11 @@ export function TicketDetailTabs({
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.18, delay: Math.min(index * 0.02, 0.2) }}
                     className={`ticket-chat-row ${item.mine ? 'ticket-chat-row--mine' : 'ticket-chat-row--theirs'} ticket-chat-row--${item.kind}`}
+                    onMouseEnter={() => setHoveredMessageId(item.id)}
+                    onMouseLeave={() => {
+                      setHoveredMessageId((current) => (current === item.id ? null : current));
+                      setExpandedReactionId((current) => (current === item.id ? null : current));
+                    }}
                   >
                     <div className={`ticket-chat-avatar ${item.mine ? 'ticket-chat-avatar--mine' : 'ticket-chat-avatar--theirs'} ticket-chat-avatar--${item.kind}`}>
                       {item.authorAvatarUrl ? (
@@ -587,11 +735,103 @@ export function TicketDetailTabs({
                       )}
                     </div>
                     <div className={`ticket-chat-bubble ${item.mine ? 'ticket-chat-bubble--mine' : 'ticket-chat-bubble--theirs'} ticket-chat-bubble--${item.kind}`}>
+                      {(hoveredMessageId === item.id || expandedReactionId === item.id) ? (
+                        <div className="ticket-reaction-toolbar">
+                          {QUICK_REACTIONS.map((reaction) => (
+                            <button
+                              key={reaction.emoji}
+                              type="button"
+                              className={`ticket-reaction-quick-btn ${(reactionsByItem[item.id] ?? []).some((r) => r.emoji === reaction.emoji && r.reacted_by_me) ? 'is-active' : ''}`}
+                              onClick={() => void toggleReaction(item.id, item.commentId, reaction.emoji)}
+                              aria-label={`React with ${reaction.emoji}`}
+                              title={reaction.emoji}
+                            >
+                              <Emoji unified={reaction.unified} emojiStyle={EmojiStyle.APPLE} size={16} />
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            className="ticket-reaction-more-btn ticket-reaction-add-btn"
+                            onClick={() => setExpandedReactionId((current) => (current === item.id ? null : item.id))}
+                            aria-label="Add reaction"
+                            title="Add reaction"
+                          >
+                            <SmilePlus size={15} strokeWidth={1.9} />
+                          </button>
+                          {item.mine && !ticketClosed ? <span className="ticket-reaction-toolbar-divider" aria-hidden /> : null}
+                          {item.mine && !ticketClosed ? (
+                            <button
+                              type="button"
+                              className="ticket-reaction-more-btn ticket-reaction-edit-btn"
+                              onClick={() => {
+                                if (!item.commentId) {
+                                  return;
+                                }
+                                setEditingCommentId(item.commentId);
+                                setEditingCommentHtml(item.body);
+                                setExpandedReactionId(null);
+                              }}
+                              aria-label="Edit message"
+                              title={item.commentId ? 'Edit' : 'Only reply messages can be edited'}
+                              disabled={!item.commentId}
+                            >
+                              <Pencil size={14} strokeWidth={2} />
+                            </button>
+                          ) : null}
+                          {expandedReactionId === item.id ? (
+                            <div className="ticket-reaction-more-pop">
+                              <EmojiPicker
+                                open
+                                onEmojiClick={(emojiData) => handleReactionEmojiSelect(item.id, item.commentId, emojiData)}
+                                lazyLoadEmojis
+                                skinTonesDisabled={false}
+                                searchDisabled={false}
+                                width={326}
+                                height={350}
+                                theme={Theme.LIGHT}
+                                emojiStyle={EmojiStyle.APPLE}
+                                previewConfig={{ showPreview: false }}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <header className="ticket-chat-head">
                         <span className="ticket-chat-author">{item.author}</span>
                         <span className="ticket-chat-time">{formatWhen(item.at)}</span>
                       </header>
-                      <p className="ticket-chat-body" dangerouslySetInnerHTML={{ __html: toDisplayHtml(item.body) }} />
+                      {item.commentId && editingCommentId === item.commentId ? (
+                        <div className="ticket-chat-edit-wrap">
+                          <Editor
+                            ref={editEditorRef}
+                            value={editingCommentHtml}
+                            onTextChange={(e) => setEditingCommentHtml((e.htmlValue ?? '').slice(0, 12000))}
+                            className="ticket-conv-editor ticket-chat-edit-editor"
+                            headerTemplate={conversationEditorHeaderTemplate}
+                            readOnly={savingCommentEdit}
+                          />
+                          <div className="ticket-chat-edit-actions">
+                            <Button
+                              type="button"
+                              text
+                              label="Cancel"
+                              disabled={savingCommentEdit}
+                              onClick={() => {
+                                setEditingCommentId(null);
+                                setEditingCommentHtml('');
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              label={savingCommentEdit ? 'Saving…' : 'Save'}
+                              disabled={savingCommentEdit || !plainTextFromHtml(editingCommentHtml)}
+                              onClick={() => void handleSaveCommentEdit()}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="ticket-chat-body" dangerouslySetInnerHTML={{ __html: toDisplayHtml(item.body) }} />
+                      )}
                       {(commentAttachments[item.id.replace('comment-', '')] ?? []).length ? (
                         <div className="ticket-chat-media-grid">
                           {(commentAttachments[item.id.replace('comment-', '')] ?? []).map((a) => {
@@ -640,6 +880,33 @@ export function TicketDetailTabs({
                         </div>
                       ) : null}
                       {item.internal ? <span className="ticket-chat-tag">Internal note</span> : null}
+                      {(reactionsByItem[item.id] ?? []).length ? (
+                        <div className="ticket-reaction-row">
+                          {(reactionsByItem[item.id] ?? []).map((reaction) => (
+                            <button
+                              key={`${item.id}-${reaction.emoji}`}
+                              type="button"
+                              className={`ticket-reaction-pill ${reaction.reacted_by_me ? 'is-active' : ''}`}
+                              onClick={() => void toggleReaction(item.id, item.commentId, reaction.emoji)}
+                              aria-label="Message reaction"
+                            >
+                              <span className="ticket-reaction-pill-emoji">
+                                <Emoji
+                                  unified={emojiToUnified(reaction.emoji)}
+                                  emojiStyle={EmojiStyle.APPLE}
+                                  size={16}
+                                />
+                              </span>
+                              <small>{reaction.count}</small>
+                              {(reaction.reacted_by_names ?? []).length ? (
+                                <span className="ticket-reaction-tooltip">
+                                  Reacted by: {(reaction.reacted_by_names ?? []).join(', ')}
+                                </span>
+                              ) : null}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   </motion.article>
                 ))}
@@ -713,6 +980,7 @@ export function TicketDetailTabs({
               </div>
             ) : null}
             <Editor
+              ref={composerEditorRef}
               id={`ticket-reply-${viewKey}`}
               value={newComment}
               onTextChange={(e) => setNewComment((e.htmlValue ?? '').slice(0, 12000))}
@@ -721,6 +989,21 @@ export function TicketDetailTabs({
               placeholder={ticketClosed ? 'Conversation is read-only while the ticket is closed.' : 'Write a reply…'}
               readOnly={ticketClosed}
             />
+            {isEmojiPickerOpen ? (
+              <div className="ticket-emoji-picker-wrap">
+                <EmojiPicker
+                  onEmojiClick={handleEmojiSelect}
+                  lazyLoadEmojis
+                  skinTonesDisabled={false}
+                  searchDisabled={false}
+                  width="100%"
+                  height={340}
+                  theme={Theme.LIGHT}
+                  emojiStyle={EmojiStyle.APPLE}
+                  previewConfig={{ showPreview: false }}
+                />
+              </div>
+            ) : null}
             <Button
               type="button"
               label={posting ? 'Sending…' : 'Post'}

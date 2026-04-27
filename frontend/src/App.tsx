@@ -5,6 +5,7 @@ import {
   FileText,
   FolderKanban,
   Layers,
+  MessageCircle,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
@@ -55,7 +56,7 @@ import {
   updateUserRequest,
   patchEventMilestoneRequest,
 } from './lib/api';
-import type { BackendRole, CalendarEventRecord, ThemePreference, UserRecord } from './lib/api';
+import type { BackendRole, CalendarEventRecord, ThemePreference, UserRecord, UserSelfUpdatePayload } from './lib/api';
 import { ModuleSidebar } from './components/layout/ModuleSidebar';
 import { TopHeader } from './components/layout/TopHeader';
 import { CustomerManagementSection } from './features/customer-management/CustomerManagementSection';
@@ -73,9 +74,10 @@ import { KnowledgeBasePage } from './pages/KnowledgeBase';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectsPage } from './pages/Projects';
 import { KbDocumentsWorkspace } from './features/kb/KbDocumentsWorkspace';
+import { ChatWorkspace } from './features/chat/ChatWorkspace';
 
 type Role = 'admin' | 'teamLead' | 'teamMember';
-type TopPage = 'projects' | 'knowledgeBase' | 'calendar' | 'tickets' | 'kb' | 'sprints';
+type TopPage = 'projects' | 'knowledgeBase' | 'calendar' | 'tickets' | 'kb' | 'sprints' | 'chat';
 type UserDialogMode = 'create' | 'edit';
 type ProjectFormStep = 0 | 1;
 type ProjectViewMode = 'table' | 'kanban';
@@ -101,12 +103,14 @@ const roleTopNav: Record<Role, NavItem[]> = {
   teamLead: [
     { id: 'sprints', label: 'Sprints', icon: <Layers size={17} />, modules: ['Configuration', 'Monitoring'] },
     { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['Create Ticket', 'Tickets'] },
+    { id: 'chat', label: 'Chat', icon: <MessageCircle size={17} />, modules: ['Inbox'] },
     { id: 'kb', label: 'Knowledge Base', icon: <BookOpenText size={17} />, modules: ['Documents'] },
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View', 'Personal Tasks'] },
   ],
   teamMember: [
-    { id: 'sprints', label: 'Sprints', icon: <Layers size={17} />, modules: [] },
+    { id: 'sprints', label: 'Sprints', icon: <Layers size={17} />, modules: ['Active Sprint', 'Sprints'] },
     { id: 'tickets', label: 'Tickets', icon: <FileText size={17} />, modules: ['My Tickets', 'History'] },
+    { id: 'chat', label: 'Chat', icon: <MessageCircle size={17} />, modules: ['Inbox'] },
     { id: 'kb', label: 'Knowledge Base', icon: <BookOpenText size={17} />, modules: ['Documents'] },
     { id: 'calendar', label: 'Calendar', icon: <CalendarDays size={17} />, modules: ['Calendar', 'View', 'Personal Tasks'] },
   ],
@@ -144,6 +148,7 @@ const initialCreateForm = {
   email: '',
   password: '',
   role: '' as BackendRole | '',
+  designation: '',
 };
 
 const initialEditForm = {
@@ -153,6 +158,7 @@ const initialEditForm = {
   email: '',
   role: 'MEMBER' as BackendRole,
   isActive: true,
+  designation: '',
 };
 
 const initialPasswordForm = {
@@ -304,7 +310,7 @@ function App() {
     }
 
     return users.filter((user) =>
-      [user.name, user.email, user.employee_id, backendRoleLabels[user.role]].some((value) =>
+      [user.name, user.email, user.employee_id, user.designation ?? '', backendRoleLabels[user.role]].some((value) =>
         value.toLowerCase().includes(query),
       ),
     );
@@ -633,7 +639,7 @@ function App() {
   }
 
   const loadPendingApprovalNotifications = useCallback(async () => {
-    if (!isAuthenticated || role !== 'teamLead') {
+    if (!isAuthenticated) {
       setPendingApprovalNotifications([]);
       return;
     }
@@ -643,7 +649,7 @@ function App() {
     } catch {
       setPendingApprovalNotifications([]);
     }
-  }, [isAuthenticated, role]);
+  }, [isAuthenticated]);
 
   const handleAcknowledgeApprovalFromHeader = useCallback(
     async (requestId: string, ticketId: string) => {
@@ -713,7 +719,7 @@ function App() {
   }, [loadPendingApprovalNotifications, pendingApprovalNotifications.length]);
 
   useEffect(() => {
-    if (!isAuthenticated || role !== 'teamLead') {
+    if (!isAuthenticated) {
       setPendingApprovalNotifications([]);
       return;
     }
@@ -722,7 +728,7 @@ function App() {
       void loadPendingApprovalNotifications();
     }, 20000);
     return () => window.clearInterval(timer);
-  }, [isAuthenticated, role, loadPendingApprovalNotifications]);
+  }, [isAuthenticated, loadPendingApprovalNotifications]);
 
   const handleLeadCreateTicket = useCallback(async (payload: TicketCreatePayload) => {
     return createTicketRequest(payload);
@@ -744,13 +750,10 @@ function App() {
     await deleteTicketRequest(id, password);
   }, []);
 
-  const handleUpdateCurrentUserProfile = useCallback(
-    async (payload: { name: string; email: string; avatar_url?: string | null }) => {
-      const updated = await updateCurrentUserRequest(payload);
-      setSessionProfile(updated);
-    },
-    [],
-  );
+  const handleUpdateCurrentUserProfile = useCallback(async (payload: UserSelfUpdatePayload) => {
+    const updated = await updateCurrentUserRequest(payload);
+    setSessionProfile(updated);
+  }, []);
 
   const handleUpdateThemePreference = useCallback(
     async (theme: ThemePreference) => {
@@ -763,6 +766,8 @@ function App() {
         email: current.email,
         avatar_url: current.avatar_url ?? null,
         theme_preference: theme,
+        github_url: current.github_url ?? null,
+        linkedin_url: current.linkedin_url ?? null,
       });
       setSessionProfile(updated);
     },
@@ -869,6 +874,7 @@ function App() {
       email: user.email,
       role: user.role,
       isActive: user.is_active,
+      designation: user.designation ?? '',
     });
     setUserFormError('');
     setIsUserDialogOpen(true);
@@ -1151,6 +1157,7 @@ function App() {
         email: createForm.email.trim(),
         password: createForm.password,
         ...(createForm.role ? { role: createForm.role } : {}),
+        ...(createForm.designation.trim() ? { designation: createForm.designation.trim() } : {}),
       });
       setUsers((current) =>
         [...current, createdUser].sort((left, right) => {
@@ -1185,6 +1192,7 @@ function App() {
         email: editForm.email.trim(),
         role: editForm.role,
         is_active: editForm.isActive,
+        designation: editForm.designation.trim() || null,
       });
       setUsers((current) =>
         current
@@ -1338,6 +1346,8 @@ function App() {
   }
 
   const canManageCalendarEvents = role === 'admin' || role === 'teamLead';
+  const canCreateCalendarEvents =
+    role === 'admin' || role === 'teamLead' || role === 'teamMember';
 
   function renderCalendarWorkspace() {
     return (
@@ -1345,6 +1355,7 @@ function App() {
         viewKey={`${selectedPage.id}-${currentModule}`}
         events={calendarEvents}
         isLoading={isCalendarEventsLoading}
+        canCreateEvents={canCreateCalendarEvents}
         canManageEvents={canManageCalendarEvents}
         projects={projects}
         onToggleMilestone={handleCalendarMilestoneToggle}
@@ -1360,6 +1371,7 @@ function App() {
         viewKey={`${selectedPage.id}-${currentModule}`}
         rows={allCalendarEvents}
         isLoading={isAllCalendarEventsLoading}
+        canCreateEvents={canCreateCalendarEvents}
         canManageEvents={canManageCalendarEvents}
         projects={projects}
         onActivitySaved={refreshCalendarEvents}
@@ -1514,6 +1526,13 @@ function App() {
       return renderDefaultContent();
     }
 
+    if (selectedPage.id === 'chat') {
+      if (role === 'teamLead' || role === 'teamMember') {
+        return <ChatWorkspace currentUserId={sessionProfile?.id ?? null} />;
+      }
+      return renderDefaultContent();
+    }
+
     if (selectedPage.id === 'kb' && (role === 'teamLead' || role === 'teamMember') && currentModule === 'Documents') {
       return (
         <KbDocumentsWorkspace viewKey={`${selectedPage.id}-${currentModule}`} projects={projects} />
@@ -1546,6 +1565,7 @@ function App() {
             transition={{ duration: 0.35 }}
           >
             <TopHeader
+              workspaceRole={role}
               topNav={topNav}
               selectedPageId={selectedPage.id}
               onSelectPage={(pageId) => {
@@ -1562,6 +1582,8 @@ function App() {
               currentUserIdentifier={currentUserIdentifier}
               currentUserId={sessionProfile?.id}
               currentUserEmail={sessionProfile?.email ?? ''}
+              currentUserGithubUrl={sessionProfile?.github_url ?? null}
+              currentUserLinkedinUrl={sessionProfile?.linkedin_url ?? null}
               currentUserCreatedAt={sessionProfile?.created_at ?? ''}
               tickets={tickets}
               events={allCalendarEvents}

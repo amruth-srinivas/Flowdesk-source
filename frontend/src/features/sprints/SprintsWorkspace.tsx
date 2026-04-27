@@ -19,6 +19,7 @@ import {
   createTicketRequest,
   deleteSprintRequest,
   getAssignableUsersRequest,
+  getCurrentUserRequest,
   getCustomersRequest,
   getProjectsRequest,
   getSprintAnalyticsRequest,
@@ -134,12 +135,21 @@ function ticketPaletteKey(value: string): string {
   return value.toLowerCase().replace(/\s+/g, '_');
 }
 
+function isTicketClosed(status: string): boolean {
+  return status.toLowerCase().replace(/\s+/g, '_') === 'closed';
+}
+
 function carryoverLabel(row: {
   carried_from_sprint_title?: string | null;
+  carried_to_sprint_title?: string | null;
   carryover_count?: number;
 }): string {
+  const target = row.carried_to_sprint_title?.trim();
   const source = row.carried_from_sprint_title?.trim();
   const count = Math.max(0, Number(row.carryover_count ?? 0));
+  if (target && count > 0) {
+    return count > 1 ? `To ${target} (${count}x)` : `To ${target}`;
+  }
   if (!source || count <= 0) {
     return 'No';
   }
@@ -232,6 +242,11 @@ function sprintTicketStatusSeverity(status: string): 'success' | 'info' | 'warni
   return 'secondary';
 }
 
+function isDoneStatus(status: string): boolean {
+  const normalized = status.toLowerCase().replace(/\s+/g, '_');
+  return normalized === 'closed' || normalized === 'resolved';
+}
+
 type SprintsWorkspaceProps = {
   viewKey: string;
   activeModule: string;
@@ -242,7 +257,10 @@ export function SprintsWorkspace({ viewKey, activeModule, role }: SprintsWorkspa
   const isLead = role === 'teamLead';
 
   if (role === 'teamMember') {
-    return <SprintsMemberView viewKey={viewKey} />;
+    if (activeModule === 'Sprints') {
+      return <SprintsMonitoring viewKey={viewKey} isLead={false} />;
+    }
+    return <SprintsMemberView viewKey={viewKey} activeModule={activeModule} />;
   }
   if (activeModule === 'Configuration') {
     return <SprintsConfiguration viewKey={viewKey} isLead={isLead} />;
@@ -253,23 +271,26 @@ export function SprintsWorkspace({ viewKey, activeModule, role }: SprintsWorkspa
   return null;
 }
 
-function SprintsMemberView({ viewKey }: { viewKey: string }) {
+function SprintsMemberView({ viewKey, activeModule }: { viewKey: string; activeModule: string }) {
   const reduceMotion = useReducedMotion();
   const isDarkTheme = isDarkOrMidnightTheme();
   const sprintDoughnutOptions = useMemo(() => getSprintDoughnutOptions(isDarkTheme), [isDarkTheme]);
   const sprintBarOptions = useMemo(() => getSprintBarOptions(isDarkTheme), [isDarkTheme]);
   const [sprints, setSprints] = useState<SprintRecord[]>([]);
   const [tickets, setTickets] = useState<TicketRecord[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const memberSubpage: 'active' | 'history' = activeModule === 'Sprints' ? 'history' : 'active';
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [sp, tk] = await Promise.all([getSprintsRequest(), getTicketsRequest()]);
+      const [sp, tk, me] = await Promise.all([getSprintsRequest(), getTicketsRequest(), getCurrentUserRequest()]);
       setSprints(sp);
       setTickets(tk);
+      setCurrentUserId(me.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
@@ -296,6 +317,10 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<SprintAnalyticsRecord | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<TicketRecord | null>(null);
+  const [historyDashboardOpen, setHistoryDashboardOpen] = useState(false);
+  const [historyDashboardLoading, setHistoryDashboardLoading] = useState(false);
+  const [historyDashboardError, setHistoryDashboardError] = useState<string | null>(null);
+  const [historyAnalytics, setHistoryAnalytics] = useState<SprintAnalyticsRecord | null>(null);
 
   const formatDateTime = useCallback((value: string | null) => {
     if (!value) return '—';
@@ -320,11 +345,120 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
     }
   }, [shownSprint]);
 
+  const historySprints = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const isHistoryStatus = (status: string) => {
+      const normalized = status.toLowerCase().trim();
+      return normalized === 'completed' || normalized === 'closed';
+    };
+
+    const hasEnded = (endDate: string) => {
+      const end = new Date(`${endDate}T00:00:00`);
+      if (Number.isNaN(end.getTime())) {
+        return false;
+      }
+      return end < today;
+    };
+
+    return [...sprints]
+      .filter((s) => {
+        if (shownSprint && s.id === shownSprint.id) {
+          return false;
+        }
+        return isHistoryStatus(s.status) || hasEnded(s.end_date);
+      })
+      .sort((a, b) => new Date(b.end_date).getTime() - new Date(a.end_date).getTime());
+  }, [sprints, shownSprint]);
+
+  const openHistoryDashboard = useCallback(async (sprintId: string) => {
+    setHistoryDashboardOpen(true);
+    setHistoryDashboardLoading(true);
+    setHistoryDashboardError(null);
+    try {
+      const data = await getSprintAnalyticsRequest(sprintId);
+      setHistoryAnalytics(data);
+    } catch (e) {
+      setHistoryDashboardError(e instanceof Error ? e.message : 'Could not load sprint dashboard');
+      setHistoryAnalytics(null);
+    } finally {
+      setHistoryDashboardLoading(false);
+    }
+  }, []);
+
+  const personalHistoryStats = useMemo(() => {
+    const sprintTickets = historyAnalytics?.tickets ?? [];
+    const mine = currentUserId
+      ? sprintTickets.filter((t) => Array.isArray(t.assignee_ids) && t.assignee_ids.includes(currentUserId))
+      : [];
+    const finished = mine.filter((t) => isDoneStatus(t.status));
+    const inProgress = mine.filter((t) => !isDoneStatus(t.status));
+    const completionRate = mine.length ? Math.round((finished.length / mine.length) * 100) : 0;
+    return {
+      assigned: mine.length,
+      finished: finished.length,
+      inProgress: inProgress.length,
+      completionRate,
+    };
+  }, [historyAnalytics, currentUserId]);
+
   const statusEntries = analytics ? Object.entries(analytics.by_status).sort(([a], [b]) => a.localeCompare(b)) : [];
 
+  const monitoringTickets = useMemo(() => {
+    const fromAnalytics = analytics?.tickets ?? [];
+    const fromSprintList = ticketsInSprint.map((t) => ({
+      id: t.id,
+      public_reference: t.public_reference,
+      title: t.title,
+      status: t.status,
+      priority: t.priority,
+      assignee_names: t.assignee_names ?? [],
+      carried_from_sprint_id: t.carried_from_sprint_id ?? null,
+      carried_from_sprint_title: null,
+      carried_to_sprint_id: null,
+      carried_to_sprint_title: null,
+      carryover_count: Number(t.carryover_count ?? 0),
+    }));
+    const merged = new Map<string, (typeof fromAnalytics)[number]>();
+    for (const item of fromAnalytics) {
+      merged.set(item.id, item);
+    }
+    for (const item of fromSprintList) {
+      if (!merged.has(item.id)) {
+        merged.set(item.id, item);
+      }
+    }
+    return Array.from(merged.values());
+  }, [analytics, ticketsInSprint]);
+
+  const monitoringStatusEntries = useMemo(() => {
+    const byStatus: Record<string, number> = {};
+    for (const t of monitoringTickets) {
+      const key = String(t.status ?? 'unknown').toLowerCase();
+      byStatus[key] = (byStatus[key] ?? 0) + 1;
+    }
+    return Object.entries(byStatus).sort(([a], [b]) => a.localeCompare(b));
+  }, [monitoringTickets]);
+
+  const monitoringActiveMembers = useMemo(() => {
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const t of monitoringTickets) {
+      for (const name of t.assignee_names ?? []) {
+        const normalized = name.trim();
+        if (!normalized) continue;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        names.push(normalized);
+      }
+    }
+    return names.sort((a, b) => a.localeCompare(b));
+  }, [monitoringTickets]);
+
   const statusChartData = useMemo(() => {
-    if (!analytics) return null;
-    const entries = Object.entries(analytics.by_status).sort(([a], [b]) => a.localeCompare(b));
+    const entries = monitoringStatusEntries;
     if (!entries.length) return null;
     return {
       labels: entries.map(([k]) => humanizeToken(k)),
@@ -336,12 +470,12 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
         },
       ],
     };
-  }, [analytics]);
+  }, [monitoringStatusEntries]);
 
   const completionChartData = useMemo(() => {
-    if (!analytics) return null;
-    const done = analytics.tickets_done;
-    const rem = analytics.tickets_remaining;
+    const total = monitoringTickets.length;
+    const done = monitoringTickets.filter((t) => isDoneStatus(t.status)).length;
+    const rem = total - done;
     if (done === 0 && rem === 0) {
       return {
         labels: ['No tickets in sprint'],
@@ -358,12 +492,12 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
         },
       ],
     };
-  }, [analytics]);
+  }, [monitoringTickets]);
 
   const priorityChartData = useMemo(() => {
-    if (!analytics?.tickets?.length) return null;
+    if (!monitoringTickets.length) return null;
     const m: Record<string, number> = {};
-    for (const t of analytics.tickets) {
+    for (const t of monitoringTickets) {
       const p = (t.priority || 'unknown').toLowerCase();
       m[p] = (m[p] ?? 0) + 1;
     }
@@ -388,7 +522,7 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
         },
       ],
     };
-  }, [analytics]);
+  }, [monitoringTickets]);
 
   return (
     <motion.article
@@ -401,28 +535,31 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
       <header className="sprints-workspace-header">
         <div>
           <h3 className="calendar-kicker">Sprints</h3>
-          <h1 className="calendar-title">Active sprint</h1>
+          <h1 className="calendar-title">{memberSubpage === 'active' ? 'Active sprint' : 'Sprints'}</h1>
           <p className="calendar-sub sprints-workspace-sub">
-            Your team&apos;s current sprint and the work linked to it. Use Tickets to search or update items.
+            {memberSubpage === 'active'
+              ? "Your team's current sprint and the work linked to it. Use Tickets to search or update items."
+              : 'Review previous sprints and open your personal dashboard for each sprint.'}
           </p>
         </div>
       </header>
+      <div className="sprints-member-layout">
+        <section className="sprints-member-content">
+          {error ? (
+            <p className="sprints-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {loading ? <p className="sprints-muted">Loading…</p> : null}
 
-      {error ? (
-        <p className="sprints-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {loading ? <p className="sprints-muted">Loading…</p> : null}
+          {!loading && memberSubpage === 'active' && !shownSprint ? (
+            <p className="sprints-muted">
+              No sprint in planning or active status for your projects. Ask your team lead to set the sprint (or confirm you are
+              added to the project as a member).
+            </p>
+          ) : null}
 
-      {!loading && !shownSprint ? (
-        <p className="sprints-muted">
-          No sprint in planning or active status for your projects. Ask your team lead to set the sprint (or confirm you are
-          added to the project as a member).
-        </p>
-      ) : null}
-
-      {shownSprint ? (
+          {memberSubpage === 'active' && shownSprint ? (
         <section className="sprints-member-sprint" aria-label="Active sprint">
           <div className="sprints-member-hero">
             <div className="sprints-member-hero-top">
@@ -478,7 +615,51 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
             ) : null}
           </div>
         </section>
-      ) : null}
+          ) : null}
+          {memberSubpage === 'history' ? (
+        <section className="sprints-member-history" aria-label="Previous sprints">
+          <div className="sprints-member-section-head">
+            <h3>Sprint history</h3>
+            <span className="sprints-member-count">
+              {historySprints.length} {historySprints.length === 1 ? 'sprint' : 'sprints'}
+            </span>
+          </div>
+          <div className="sprints-monitoring-sprints-table-shell">
+            <DataTable
+              value={historySprints}
+              dataKey="id"
+              className="user-table sprints-monitoring-sprints-table"
+              stripedRows
+              emptyMessage="No previous sprints found yet."
+            >
+              <Column
+                header="Sprint"
+                body={(row: SprintRecord) => (
+                  <div className="sprints-sprint-table-name">
+                    <span className="sprints-sprint-table-title">{row.title}</span>
+                    <Tag value={humanizeToken(row.status)} severity={sprintStatusTagSeverity(row.status)} rounded />
+                  </div>
+                )}
+              />
+              <Column
+                header="Period"
+                body={(row: SprintRecord) => (
+                  <span className="sprints-sprint-table-dates">{formatSprintRange(row.start_date, row.end_date)}</span>
+                )}
+              />
+              <Column
+                header="My dashboard"
+                style={{ width: '190px' }}
+                body={(row: SprintRecord) => (
+                  <Button type="button" label="View details" text onClick={() => void openHistoryDashboard(row.id)} />
+                )}
+              />
+            </DataTable>
+          </div>
+        </section>
+          ) : null}
+        </section>
+      </div>
 
       <Dialog
         header={selectedTicket ? `${selectedTicket.public_reference ?? `#${selectedTicket.ticket_number}`} · Ticket details` : 'Ticket details'}
@@ -610,17 +791,19 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
                 <div className="sprints-analytics-kpis">
                   <div className="sprints-kpi">
                     <span className="sprints-kpi-label">Tickets</span>
-                    <span className="sprints-kpi-value">{analytics.total_tickets}</span>
+                    <span className="sprints-kpi-value">{monitoringTickets.length}</span>
                   </div>
                   <div className="sprints-kpi">
                     <span className="sprints-kpi-label">Done / resolved</span>
                     <span className="sprints-kpi-value">
-                      {analytics.tickets_done} / {analytics.total_tickets}
+                      {monitoringTickets.filter((t) => isDoneStatus(t.status)).length} / {monitoringTickets.length}
                     </span>
                   </div>
                   <div className="sprints-kpi">
                     <span className="sprints-kpi-label">Remaining</span>
-                    <span className="sprints-kpi-value">{analytics.tickets_remaining}</span>
+                    <span className="sprints-kpi-value">
+                      {Math.max(0, monitoringTickets.length - monitoringTickets.filter((t) => isDoneStatus(t.status)).length)}
+                    </span>
                   </div>
                 </div>
                 <div className="sprints-progress-wrap">
@@ -629,7 +812,7 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
                 </div>
                 <h3 className="sprints-subheading">By status</h3>
                 <div className="sprints-status-grid">
-                  {statusEntries.map(([st, count]) => (
+                  {monitoringStatusEntries.map(([st, count]) => (
                     <div key={st} className="sprints-status-cell">
                       <span className="sprints-status-name">{humanizeToken(st)}</span>
                       <span className="sprints-status-count">{count}</span>
@@ -642,19 +825,15 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
             <section className="sprints-monitoring-members" aria-label="Active members">
               <h3 className="sprints-monitoring-section-title">People on this sprint</h3>
               <p className="sprints-monitoring-section-sub">Everyone assigned to at least one ticket in this sprint.</p>
-              {(analytics.active_members ?? []).length ? (
+              {monitoringActiveMembers.length ? (
                 <ul className="sprints-monitoring-member-chips">
-                  {(analytics.active_members ?? []).map((m) => (
-                    <li key={m.id}>
-                      <span className="sprints-monitoring-member-chip" title={m.name}>
-                        {m.avatar_url ? (
-                          <img src={m.avatar_url} alt="" className="sprints-monitoring-member-avatar" loading="lazy" />
-                        ) : (
-                          <span className="sprints-monitoring-member-initials" aria-hidden>
-                            {memberInitials(m.name)}
-                          </span>
-                        )}
-                        <span className="sprints-monitoring-member-name">{m.name}</span>
+                  {monitoringActiveMembers.map((name) => (
+                    <li key={name}>
+                      <span className="sprints-monitoring-member-chip" title={name}>
+                        <span className="sprints-monitoring-member-initials" aria-hidden>
+                          {memberInitials(name)}
+                        </span>
+                        <span className="sprints-monitoring-member-name">{name}</span>
                       </span>
                     </li>
                   ))}
@@ -667,7 +846,7 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
             <section className="sprints-monitoring-tickets" aria-label="Sprint tickets">
               <h3 className="sprints-monitoring-section-title">Tickets in this sprint</h3>
               <div className="sprints-monitoring-table-shell">
-                <DataTable value={analytics.tickets ?? []} dataKey="id" className="user-table sprints-monitoring-table" stripedRows size="small">
+                <DataTable value={monitoringTickets} dataKey="id" className="user-table sprints-monitoring-table" stripedRows size="small">
                   <Column field="public_reference" header="Ticket" style={{ width: '130px' }} />
                   <Column field="title" header="Title" />
                   <Column
@@ -686,12 +865,94 @@ function SprintsMemberView({ viewKey }: { viewKey: string }) {
                     header="Carryover"
                     style={{ width: '190px' }}
                     body={(row: { carried_from_sprint_title?: string | null; carryover_count?: number }) =>
-                      row.carryover_count ? (
+                      row.carryover_count || row.carried_to_sprint_title ? (
                         <Tag value={carryoverLabel(row)} severity="warning" className="sprints-carryover-tag" />
                       ) : (
                         <span className="sprints-muted">—</span>
                       )
                     }
+                  />
+                </DataTable>
+              </div>
+            </section>
+          </div>
+        ) : null}
+      </Dialog>
+      <Dialog
+        header={historyAnalytics ? `${historyAnalytics.title} · My sprint dashboard` : 'My sprint dashboard'}
+        visible={historyDashboardOpen}
+        onHide={() => {
+          setHistoryDashboardOpen(false);
+          setHistoryDashboardError(null);
+        }}
+        style={{ width: 'min(980px, 95vw)' }}
+        className="sprints-member-dashboard-dialog"
+      >
+        {historyDashboardLoading ? <p className="sprints-muted sprints-monitoring-loading-inline">Loading dashboard data…</p> : null}
+        {historyDashboardError ? (
+          <p className="sprints-error" role="alert">
+            {historyDashboardError}
+          </p>
+        ) : null}
+        {!historyDashboardLoading && !historyDashboardError && historyAnalytics ? (
+          <div className="sprints-member-dashboard-shell sprints-monitoring-dashboard">
+            <div className="sprints-monitoring-dashboard-head">
+              <div>
+                <h2 className="sprints-monitoring-dashboard-title">My performance</h2>
+                <p className="sprints-monitoring-hero-meta">
+                  <strong>{historyAnalytics.title}</strong>
+                  <span className="sprints-monitoring-hero-dot" aria-hidden>
+                    ·
+                  </span>
+                  {personalHistoryStats.assigned} assigned
+                </p>
+              </div>
+            </div>
+            <div className="sprints-analytics sprints-analytics--panel">
+              <div className="sprints-analytics-kpis">
+                <div className="sprints-kpi">
+                  <span className="sprints-kpi-label">Assigned to me</span>
+                  <span className="sprints-kpi-value">{personalHistoryStats.assigned}</span>
+                </div>
+                <div className="sprints-kpi">
+                  <span className="sprints-kpi-label">Finished by me</span>
+                  <span className="sprints-kpi-value">{personalHistoryStats.finished}</span>
+                </div>
+                <div className="sprints-kpi">
+                  <span className="sprints-kpi-label">Still in progress</span>
+                  <span className="sprints-kpi-value">{personalHistoryStats.inProgress}</span>
+                </div>
+                <div className="sprints-kpi">
+                  <span className="sprints-kpi-label">Completion rate</span>
+                  <span className="sprints-kpi-value">{personalHistoryStats.completionRate}%</span>
+                </div>
+              </div>
+            </div>
+            <section className="sprints-monitoring-tickets" aria-label="My sprint tickets">
+              <h3 className="sprints-monitoring-section-title">My tickets in this sprint</h3>
+              <div className="sprints-monitoring-table-shell">
+                <DataTable
+                  value={(historyAnalytics.tickets ?? []).filter(
+                    (t) => Boolean(currentUserId) && Array.isArray(t.assignee_ids) && t.assignee_ids.includes(currentUserId!),
+                  )}
+                  dataKey="id"
+                  className="user-table sprints-monitoring-table"
+                  stripedRows
+                  emptyMessage="No tickets were assigned to you in this sprint."
+                >
+                  <Column field="public_reference" header="Ticket" style={{ width: '130px' }} />
+                  <Column field="title" header="Title" />
+                  <Column
+                    field="status"
+                    header="Status"
+                    body={(row: { status: string }) => (
+                      <Tag
+                        value={row.status.replace(/_/g, ' ')}
+                        severity={sprintTicketStatusSeverity(row.status)}
+                        className={`sprints-ticket-status sprints-ticket-status--${ticketPaletteKey(row.status)}`}
+                      />
+                    )}
+                    style={{ width: '140px' }}
                   />
                 </DataTable>
               </div>
@@ -913,7 +1174,7 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
   const inScopeTickets = useMemo(() => {
     if (!ticketContextSprint?.project_ids?.length) return [];
     const set = new Set(ticketContextSprint.project_ids);
-    return tickets.filter((t) => set.has(t.project_id));
+    return tickets.filter((t) => set.has(t.project_id) && !isTicketClosed(t.status));
   }, [tickets, ticketContextSprint]);
 
   const ticketsInSprint = useMemo(
@@ -1657,10 +1918,7 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const displaySprints = useMemo(
-    () => (isLead ? sprints : sprints.filter(isMemberVisibleSprint)),
-    [sprints, isLead],
-  );
+  const displaySprints = useMemo(() => sprints, [sprints]);
 
   const selectedSprint = useMemo(
     () => displaySprints.find((s) => s.id === selectedId) ?? null,
@@ -1675,7 +1933,7 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
         const list = await getSprintsRequest();
         if (cancelled) return;
         setSprints(list);
-        const visible = isLead ? list : list.filter(isMemberVisibleSprint);
+        const visible = list;
         setSelectedId((cur) => (cur && visible.some((s) => s.id === cur) ? cur : null));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load');
@@ -2107,7 +2365,7 @@ function SprintsMonitoring({ viewKey, isLead }: { viewKey: string; isLead: boole
                           header="Carryover"
                           style={{ width: '190px' }}
                           body={(row) =>
-                            row.carryover_count ? (
+                            row.carryover_count || row.carried_to_sprint_title ? (
                               <Tag value={carryoverLabel(row)} severity="warning" className="sprints-carryover-tag" />
                             ) : (
                               <span className="sprints-muted">—</span>

@@ -17,6 +17,9 @@ export type UserRecord = {
   is_active: boolean;
   avatar_url?: string | null;
   theme_preference?: ThemePreference;
+  designation?: string | null;
+  github_url?: string | null;
+  linkedin_url?: string | null;
   created_at: string;
 };
 
@@ -26,6 +29,7 @@ export type UserCreatePayload = {
   email: string;
   password: string;
   role?: BackendRole;
+  designation?: string | null;
 };
 
 export type UserUpdatePayload = {
@@ -36,6 +40,7 @@ export type UserUpdatePayload = {
   is_active: boolean;
   avatar_url?: string | null;
   theme_preference?: ThemePreference;
+  designation?: string | null;
 };
 
 export type UserSelfUpdatePayload = {
@@ -43,6 +48,8 @@ export type UserSelfUpdatePayload = {
   email: string;
   avatar_url?: string | null;
   theme_preference?: ThemePreference;
+  github_url?: string | null;
+  linkedin_url?: string | null;
 };
 
 export type ProjectStatus = 'active' | 'on-hold' | 'completed' | 'archived';
@@ -815,7 +822,11 @@ export type TicketRecord = {
   resolved_by_name?: string | null;
   closed_by: string | null;
   closed_by_name?: string | null;
+  /** Member who requested lead approval to close (when acknowledged). */
+  close_approval_requested_by?: string | null;
+  close_approval_requested_by_name?: string | null;
   sprint_id: string | null;
+  sprint_title?: string | null;
   carried_from_sprint_id?: string | null;
   carried_over_at?: string | null;
   carryover_count?: number;
@@ -894,6 +905,7 @@ export type TicketCommentRecord = {
   author_avatar_url?: string | null;
   body: string;
   is_internal: boolean;
+  reactions?: Array<{ emoji: string; count: number; reacted_by_me: boolean; reacted_by_names?: string[] }>;
   created_at: string;
   updated_at: string;
 };
@@ -929,6 +941,73 @@ export async function postTicketCommentRequest(
     body: JSON.stringify(payload),
   });
   return parseResponse<TicketCommentRecord>(response);
+}
+
+export type TicketCommentUpdatePayload = {
+  body: string;
+};
+
+export async function patchTicketCommentRequest(
+  ticketId: string,
+  commentId: string,
+  payload: TicketCommentUpdatePayload,
+  options?: { cycle_id?: string },
+): Promise<TicketCommentRecord> {
+  const params = new URLSearchParams();
+  if (options?.cycle_id) {
+    params.set('cycle_id', options.cycle_id);
+  }
+  const response = await fetch(
+    `${API_BASE_URL}/tickets/${ticketId}/comments/${commentId}${params.size ? `?${params}` : ''}`,
+    {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    },
+  );
+  return parseResponse<TicketCommentRecord>(response);
+}
+
+export async function toggleTicketCommentReactionRequest(
+  ticketId: string,
+  commentId: string,
+  emoji: string,
+  options?: { cycle_id?: string },
+): Promise<Array<{ emoji: string; count: number; reacted_by_me: boolean; reacted_by_names?: string[] }>> {
+  const params = new URLSearchParams();
+  if (options?.cycle_id) {
+    params.set('cycle_id', options.cycle_id);
+  }
+  const response = await fetch(
+    `${API_BASE_URL}/tickets/${ticketId}/comments/${commentId}/reactions${params.size ? `?${params}` : ''}`,
+    {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ emoji }),
+    },
+  );
+  return parseResponse<Array<{ emoji: string; count: number; reacted_by_me: boolean; reacted_by_names?: string[] }>>(response);
+}
+
+export async function getTicketRootReactionsRequest(
+  ticketId: string,
+): Promise<Array<{ emoji: string; count: number; reacted_by_me: boolean; reacted_by_names?: string[] }>> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/reactions/root`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<Array<{ emoji: string; count: number; reacted_by_me: boolean; reacted_by_names?: string[] }>>(response);
+}
+
+export async function toggleTicketRootReactionRequest(
+  ticketId: string,
+  emoji: string,
+): Promise<Array<{ emoji: string; count: number; reacted_by_me: boolean; reacted_by_names?: string[] }>> {
+  const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/reactions/root`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ emoji }),
+  });
+  return parseResponse<Array<{ emoji: string; count: number; reacted_by_me: boolean; reacted_by_names?: string[] }>>(response);
 }
 
 export type TicketHistoryRecord = {
@@ -1184,6 +1263,8 @@ export type TicketApprovalRequestRecord = {
 
 export type TicketApprovalNotificationRecord = {
   notification_id: string;
+  notification_type?: string | null;
+  title?: string | null;
   request_id: string | null;
   ticket_id: string;
   ticket_reference: string | null;
@@ -1292,6 +1373,8 @@ export type SprintTicketBrief = {
   assignee_names: string[];
   carried_from_sprint_id: string | null;
   carried_from_sprint_title: string | null;
+  carried_to_sprint_id?: string | null;
+  carried_to_sprint_title?: string | null;
   carryover_count: number;
 };
 
@@ -1347,4 +1430,211 @@ export async function deleteSprintRequest(sprintId: string): Promise<void> {
 export async function getSprintAnalyticsRequest(sprintId: string): Promise<SprintAnalyticsRecord> {
   const response = await fetch(`${API_BASE_URL}/sprints/${sprintId}/analytics`, { headers: getAuthHeaders() });
   return parseResponse<SprintAnalyticsRecord>(response);
+}
+
+export type ChatSearchUserRecord = {
+  id: string;
+  employee_id: string;
+  name: string;
+  designation: string | null;
+  avatar_url: string | null;
+};
+
+export type ChatRequestRecord = {
+  id: string;
+  requester_id: string;
+  requester_name: string;
+  requester_employee_id: string | null;
+  requester_avatar_url: string | null;
+  recipient_id: string;
+  recipient_name: string;
+  recipient_employee_id: string | null;
+  recipient_avatar_url: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  created_at: string;
+  updated_at: string;
+  responded_at: string | null;
+};
+
+export type ChatAttachmentRecord = {
+  id: string;
+  filename: string;
+  file_size_bytes: number;
+  mime_type: string;
+  uploaded_by: string;
+  uploaded_by_name: string;
+  created_at: string;
+};
+
+export type ChatMessagePreviewRecord = {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  body: string | null;
+  created_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+};
+
+export type ChatReactionRecord = {
+  emoji: string;
+  count: number;
+  reacted_by_me: boolean;
+  reacted_by_names: string[];
+};
+
+export type ChatMessageRecord = {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_avatar_url: string | null;
+  body: string | null;
+  reply_to: ChatMessagePreviewRecord | null;
+  forwarded_from: ChatMessagePreviewRecord | null;
+  attachments: ChatAttachmentRecord[];
+  reactions: ChatReactionRecord[];
+  is_read_by_other: boolean;
+  created_at: string;
+  updated_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+};
+
+export type ChatConversationRecord = {
+  id: string;
+  other_user_id: string;
+  other_user_name: string;
+  other_user_employee_id: string;
+  other_user_avatar_url: string | null;
+  other_user_designation: string | null;
+  last_message: ChatMessageRecord | null;
+  unread_count: number;
+  last_message_at: string | null;
+  approved_at: string;
+};
+
+export async function searchChatUsersRequest(query: string): Promise<ChatSearchUserRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/chat/users/search?${new URLSearchParams({ query })}`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<ChatSearchUserRecord[]>(response);
+}
+
+export async function createChatRequestRequest(recipientId: string): Promise<ChatRequestRecord> {
+  const response = await fetch(`${API_BASE_URL}/chat/requests`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ recipient_id: recipientId }),
+  });
+  return parseResponse<ChatRequestRecord>(response);
+}
+
+export async function getChatRequestsRequest(): Promise<ChatRequestRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/chat/requests`, { headers: getAuthHeaders() });
+  return parseResponse<ChatRequestRecord[]>(response);
+}
+
+export async function actOnChatRequestRequest(
+  requestId: string,
+  action: 'approve' | 'reject' | 'cancel',
+): Promise<ChatRequestRecord> {
+  const response = await fetch(`${API_BASE_URL}/chat/requests/${requestId}`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ action }),
+  });
+  return parseResponse<ChatRequestRecord>(response);
+}
+
+export async function getChatConversationsRequest(): Promise<ChatConversationRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/chat/conversations`, { headers: getAuthHeaders() });
+  return parseResponse<ChatConversationRecord[]>(response);
+}
+
+export async function getConversationMessagesRequest(conversationId: string): Promise<ChatMessageRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}/messages`, {
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<ChatMessageRecord[]>(response);
+}
+
+export async function sendConversationMessageRequest(payload: {
+  conversationId: string;
+  body?: string;
+  replyToMessageId?: string | null;
+  forwardedFromMessageId?: string | null;
+  attachments?: File[];
+}): Promise<ChatMessageRecord> {
+  const token = localStorage.getItem('accessToken');
+  const formData = new FormData();
+  if (payload.body !== undefined) {
+    formData.append('body', payload.body);
+  }
+  if (payload.replyToMessageId) {
+    formData.append('reply_to_message_id', payload.replyToMessageId);
+  }
+  if (payload.forwardedFromMessageId) {
+    formData.append('forwarded_from_message_id', payload.forwardedFromMessageId);
+  }
+  for (const file of payload.attachments ?? []) {
+    formData.append('attachments', file);
+  }
+  const response = await fetch(`${API_BASE_URL}/chat/conversations/${payload.conversationId}/messages`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+  const parsed = await parseResponse<{ message: ChatMessageRecord }>(response);
+  return parsed.message;
+}
+
+export async function editChatMessageRequest(messageId: string, body: string): Promise<ChatMessageRecord> {
+  const response = await fetch(`${API_BASE_URL}/chat/messages/${messageId}`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ body }),
+  });
+  return parseResponse<ChatMessageRecord>(response);
+}
+
+export async function deleteChatMessageRequest(messageId: string): Promise<ChatMessageRecord> {
+  const response = await fetch(`${API_BASE_URL}/chat/messages/${messageId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<ChatMessageRecord>(response);
+}
+
+export async function toggleChatReactionRequest(messageId: string, emoji: string): Promise<ChatReactionRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/chat/messages/${messageId}/reactions`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ emoji }),
+  });
+  return parseResponse<ChatReactionRecord[]>(response);
+}
+
+export async function forwardChatMessageRequest(messageId: string, targetConversationId: string): Promise<ChatMessageRecord> {
+  const response = await fetch(`${API_BASE_URL}/chat/messages/${messageId}/forward`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ target_conversation_id: targetConversationId }),
+  });
+  const parsed = await parseResponse<{ message: ChatMessageRecord }>(response);
+  return parsed.message;
+}
+
+export async function markChatConversationReadRequest(conversationId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}/read`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
+}
+
+export function chatAttachmentFileUrl(attachmentId: string): string {
+  return `${API_BASE_URL}/chat/attachments/${attachmentId}/file`;
 }

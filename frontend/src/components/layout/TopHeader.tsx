@@ -8,7 +8,9 @@ import { InputText } from 'primereact/inputtext';
 import { Password } from 'primereact/password';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { CalendarEventRecord, ThemePreference, TicketApprovalNotificationRecord, TicketRecord } from '../../lib/api';
+import type { CalendarEventRecord, ThemePreference, TicketApprovalNotificationRecord, TicketRecord, UserSelfUpdatePayload } from '../../lib/api';
+
+type WorkspaceRole = 'admin' | 'teamLead' | 'teamMember';
 
 type TopNavItem = {
   id: string;
@@ -58,6 +60,7 @@ type TopHeaderProps = {
   topNav: TopNavItem[];
   selectedPageId: string;
   onSelectPage: (pageId: string) => void;
+  workspaceRole?: WorkspaceRole;
   currentUserAvatar: string;
   currentUserAvatarUrl?: string | null;
   currentUserName: string;
@@ -65,6 +68,8 @@ type TopHeaderProps = {
   currentUserIdentifier: string;
   currentUserId?: string;
   currentUserEmail?: string;
+  currentUserGithubUrl?: string | null;
+  currentUserLinkedinUrl?: string | null;
   currentUserCreatedAt?: string;
   tickets?: TicketRecord[];
   events?: CalendarEventRecord[];
@@ -77,7 +82,7 @@ type TopHeaderProps = {
   onMarkNotificationRead?: (notificationId: string) => void;
   onDeleteNotification?: (notificationId: string) => void;
   onDeleteAllNotifications?: () => void;
-  onUpdateProfile?: (payload: { name: string; email: string; avatar_url?: string | null }) => Promise<void>;
+  onUpdateProfile?: (payload: UserSelfUpdatePayload) => Promise<void>;
   currentThemePreference?: ThemePreference;
   onUpdateThemePreference?: (theme: ThemePreference) => Promise<void>;
   onUpdatePassword?: (newPassword: string) => Promise<void>;
@@ -88,6 +93,7 @@ export function TopHeader({
   topNav,
   selectedPageId,
   onSelectPage,
+  workspaceRole = 'admin',
   currentUserAvatar,
   currentUserAvatarUrl,
   currentUserName,
@@ -95,6 +101,8 @@ export function TopHeader({
   currentUserIdentifier,
   currentUserId,
   currentUserEmail,
+  currentUserGithubUrl,
+  currentUserLinkedinUrl,
   currentUserCreatedAt,
   tickets = [],
   events = [],
@@ -141,6 +149,9 @@ export function TopHeader({
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState(currentUserAvatarUrl ?? '');
   const [avatarZoom, setAvatarZoom] = useState(1);
   const [hasUploadedAvatar, setHasUploadedAvatar] = useState(false);
+  const [profileGithubUrl, setProfileGithubUrl] = useState(currentUserGithubUrl ?? '');
+  const [profileLinkedinUrl, setProfileLinkedinUrl] = useState(currentUserLinkedinUrl ?? '');
+  const showSocialFields = workspaceRole === 'teamLead' || workspaceRole === 'teamMember';
 
   useEffect(() => {
     setProfileName(currentUserName);
@@ -149,8 +160,17 @@ export function TopHeader({
     setAvatarPreviewUrl(currentUserAvatarUrl ?? '');
     setAvatarZoom(1);
     setHasUploadedAvatar(false);
+    setProfileGithubUrl(currentUserGithubUrl ?? '');
+    setProfileLinkedinUrl(currentUserLinkedinUrl ?? '');
     setSelectedTheme(currentThemePreference ?? 'light');
-  }, [currentUserName, currentUserEmail, currentUserAvatarUrl, currentThemePreference]);
+  }, [
+    currentUserName,
+    currentUserEmail,
+    currentUserAvatarUrl,
+    currentThemePreference,
+    currentUserGithubUrl,
+    currentUserLinkedinUrl,
+  ]);
 
   useEffect(() => {
     setSelectedTheme(currentThemePreference ?? 'light');
@@ -162,11 +182,16 @@ export function TopHeader({
     setSettingsError('');
     setSettingsSuccess('');
     try {
-      await onUpdateProfile({
+      const base: UserSelfUpdatePayload = {
         name: profileName.trim(),
         email: profileEmail.trim(),
         avatar_url: profileAvatarUrl.trim() || null,
-      });
+      };
+      if (showSocialFields) {
+        base.github_url = profileGithubUrl.trim() || null;
+        base.linkedin_url = profileLinkedinUrl.trim() || null;
+      }
+      await onUpdateProfile(base);
       setSettingsSuccess('Profile updated.');
     } catch (e) {
       setSettingsError(e instanceof Error ? e.message : 'Could not update profile');
@@ -555,6 +580,14 @@ export function TopHeader({
             <ul className="notification-inbox-list">
               {notifications.map((item) => {
                 const statusKey = (item.ticket_status ?? 'open').toLowerCase().replace(/\s+/g, '_');
+                const displayTitle = item.title?.trim() || item.ticket_title;
+                const actorLabel =
+                  item.requested_by_name?.trim() ||
+                  (item.notification_type === 'ticket_comment_reaction'
+                    ? 'Reaction update'
+                    : item.notification_type === 'ticket_chat_message'
+                      ? 'Conversation update'
+                      : 'Team member');
                 return (
                   <li
                     key={item.notification_id}
@@ -575,11 +608,11 @@ export function TopHeader({
                           </span>
                         ) : null}
                       </div>
-                      <h3 className="notification-inbox-title">{item.ticket_title}</h3>
+                      <h3 className="notification-inbox-title">{displayTitle}</h3>
                       <div className="notification-inbox-meta">
                         <span className="notification-inbox-meta-block">
                           <i className="pi pi-user" aria-hidden />
-                          <span>{item.requested_by_name ? item.requested_by_name : 'Team member'}</span>
+                          <span>{actorLabel}</span>
                         </span>
                         <span className="notification-inbox-meta-sep" aria-hidden>
                           ·
@@ -650,7 +683,7 @@ export function TopHeader({
             </div>
             <h3 className="notification-inbox-empty-title">{"You're all set"}</h3>
             <p className="notification-inbox-empty-copy">
-              {"No approval notifications right now. New requests will appear here."}
+              {"No notifications right now. New approvals, chat messages, and reactions will appear here."}
             </p>
           </div>
         )}
@@ -765,6 +798,38 @@ export function TopHeader({
                     <InputText value={currentUserRoleLabel} disabled className="settings-readonly-field" />
                   </div>
                 </label>
+                {showSocialFields ? (
+                  <>
+                    <label className="settings-span-2">
+                      GitHub profile URL
+                      <div className="p-inputgroup settings-inputgroup">
+                        <span className="p-inputgroup-addon">
+                          <i className="pi pi-github" />
+                        </span>
+                        <InputText
+                          value={profileGithubUrl}
+                          onChange={(e) => setProfileGithubUrl(e.target.value)}
+                          disabled={settingsBusy}
+                          placeholder="https://github.com/yourusername"
+                        />
+                      </div>
+                    </label>
+                    <label className="settings-span-2">
+                      LinkedIn profile URL
+                      <div className="p-inputgroup settings-inputgroup">
+                        <span className="p-inputgroup-addon">
+                          <i className="pi pi-linkedin" />
+                        </span>
+                        <InputText
+                          value={profileLinkedinUrl}
+                          onChange={(e) => setProfileLinkedinUrl(e.target.value)}
+                          disabled={settingsBusy}
+                          placeholder="https://www.linkedin.com/in/yourprofile"
+                        />
+                      </div>
+                    </label>
+                  </>
+                ) : null}
                 <label className="settings-span-2">
                   Upload avatar from file
                   <div className="p-inputgroup settings-inputgroup">

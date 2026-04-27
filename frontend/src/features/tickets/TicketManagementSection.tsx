@@ -174,23 +174,52 @@ function getClosedByLabel(t: TicketRecord, userLookup: Map<string, string>): str
     resolved_by?: string | null;
     closed_by_name?: string | null;
     closed_by?: string | null;
+    close_approval_requested_by_name?: string | null;
+    close_approval_requested_by?: string | null;
   };
-  const resolvedBy =
-    audit.resolved_by_name?.trim() ||
-    (audit.resolved_by ? userLookup.get(audit.resolved_by) ?? '' : '');
   const closedBy =
     audit.closed_by_name?.trim() ||
     (audit.closed_by ? userLookup.get(audit.closed_by) ?? '' : '');
-  if (t.status === 'closed' && resolvedBy && closedBy && resolvedBy !== closedBy) {
-    return `${resolvedBy} + ${closedBy}`;
+
+  if (t.status !== 'closed') {
+    if (closedBy) {
+      return closedBy;
+    }
+    return 'Not closed';
   }
-  if (audit.closed_by_name?.trim()) {
-    return audit.closed_by_name.trim();
+
+  const resolvedBy =
+    audit.resolved_by_name?.trim() ||
+    (audit.resolved_by ? userLookup.get(audit.resolved_by) ?? '' : '');
+  const requester =
+    audit.close_approval_requested_by_name?.trim() ||
+    (audit.close_approval_requested_by
+      ? userLookup.get(audit.close_approval_requested_by) ?? ''
+      : '');
+
+  const parts: string[] = [];
+  for (const name of [resolvedBy, requester, closedBy]) {
+    const x = name?.trim();
+    if (x && !parts.includes(x)) {
+      parts.push(x);
+    }
   }
-  if (audit.closed_by && userLookup.get(audit.closed_by)) {
-    return userLookup.get(audit.closed_by) ?? '—';
+  if (parts.length) {
+    return parts.join(' · ');
   }
-  return t.status === 'closed' ? '—' : 'Not closed';
+  return '—';
+}
+
+function looksLikeUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+function sanitizeSprintTitle(value: string | null | undefined): string | null {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed || looksLikeUuid(trimmed)) {
+    return null;
+  }
+  return trimmed;
 }
 
 function filterByModule(
@@ -202,9 +231,9 @@ function filterByModule(
   if (role === 'member') {
     switch (module) {
       case 'My Tickets':
-        return tickets;
+        return tickets.filter((t) => ['open', 'in_progress', 'in_review', 'resolved'].includes(t.status));
       case 'History':
-        return tickets.filter((t) => t.status === 'resolved' || t.status === 'closed');
+        return tickets.filter((t) => t.status === 'closed');
       default:
         return tickets;
     }
@@ -352,8 +381,18 @@ export function TicketManagementSection({
 
   const projectLookup = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
   const userLookup = useMemo(() => new Map(assignableUsers.map((u) => [u.id, u.name])), [assignableUsers]);
-  const sprintLookup = useMemo(() => new Map(sprints.map((s) => [s.id, s.title])), [sprints]);
   const approvalByTicket = useMemo(() => new Map(approvalRequests.map((r) => [r.ticket_id, r])), [approvalRequests]);
+  const sprintLabelLookup = useMemo(
+    () =>
+      new Map(
+        sprints.map((s) => {
+          const rawTitle = String(s.title ?? '').trim();
+          const display = rawTitle && !looksLikeUuid(rawTitle) ? rawTitle : 'Sprint';
+          return [s.id, display];
+        }),
+      ),
+    [sprints],
+  );
 
   const configByType = useMemo(
     () => new Map(ticketConfigurations.map((c) => [c.ticket_type, c])),
@@ -1245,7 +1284,9 @@ export function TicketManagementSection({
                   style={{ minWidth: '132px', width: '152px' }}
                   body={(row: TicketRecord) => (
                     <span className="tickets-project-cell">
-                      {row.sprint_id ? sprintLookup.get(row.sprint_id) ?? row.sprint_id : 'Backlog'}
+                      {row.sprint_id
+                        ? sanitizeSprintTitle(row.sprint_title) ?? sprintLabelLookup.get(row.sprint_id) ?? 'Sprint'
+                        : 'Backlog'}
                     </span>
                   )}
                 />

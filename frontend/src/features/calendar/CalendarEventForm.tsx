@@ -390,8 +390,8 @@ export function CalendarEventForm({
           <h1 className="calendar-title">{mode === 'edit' ? 'Edit activity' : 'Create event'}</h1>
           <p className="calendar-sub">
             {mode === 'edit'
-              ? 'Update scheduling, status, progress, and milestones. Only administrators can edit activities.'
-              : 'Schedule a project event, set tracking status and progress, and attach milestones. Only administrators can create events.'}
+              ? 'Update scheduling, status, progress, and milestones. Team leads and administrators can edit activities.'
+              : 'Schedule a project event for a project you belong to, set tracking status and progress, and attach milestones. Team members can create events; team leads and administrators can edit any activity.'}
           </p>
         </div>
       </header>

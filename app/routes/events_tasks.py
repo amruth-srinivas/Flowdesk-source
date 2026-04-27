@@ -97,11 +97,11 @@ def _milestones_from_payload(items: list[MilestoneCreate]) -> list[EventMileston
 @router.get("/events", response_model=list[EventResponse])
 def list_events(
     db: Session = Depends(get_db),
-    _=Depends(get_current_member),
+    user: User = Depends(get_current_member),
     from_: datetime | None = Query(None, alias="from"),
     to: datetime | None = Query(None, description="ISO range end; events overlapping range are returned"),
 ):
-    """List events, optionally filtered to those overlapping [from, to]."""
+    """List events visible to the caller; project events are limited to projects the user belongs to (admins see all)."""
     stmt = (
         select(Event)
         .options(joinedload(Event.project), selectinload(Event.milestones), selectinload(Event.attachments))
@@ -116,15 +116,29 @@ def list_events(
                 func.coalesce(Event.end_at, Event.start_at) >= from_,
             )
         )
+    if user.role != UserRole.ADMIN:
+        allowed = accessible_project_ids(db, user)
+        if not allowed:
+            return []
+        stmt = stmt.where(Event.project_id.in_(allowed))
     rows = db.execute(stmt).unique().scalars().all()
     return [_event_to_response(db, e) for e in rows]
 
 
+def _ensure_calendar_project_access(db: Session, user: User, project_id: UUID) -> None:
+    if user.role == UserRole.ADMIN:
+        return
+    allowed = accessible_project_ids(db, user)
+    if project_id not in allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this project")
+
+
 @router.post("/events", response_model=EventResponse, status_code=status.HTTP_201_CREATED)
-def create_event(payload: EventCreate, db: Session = Depends(get_db), user=Depends(get_current_lead)):
+def create_event(payload: EventCreate, db: Session = Depends(get_db), user: User = Depends(get_current_member)):
     project = db.get(Project, payload.project_id)
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    _ensure_calendar_project_access(db, user, payload.project_id)
 
     event = Event(
         project_id=payload.project_id,

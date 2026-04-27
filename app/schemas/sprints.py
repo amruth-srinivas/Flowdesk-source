@@ -49,6 +49,8 @@ class SprintTicketBrief(BaseModel):
     assignee_names: list[str] = Field(default_factory=list)
     carried_from_sprint_id: UUID | None = None
     carried_from_sprint_title: str | None = None
+    carried_to_sprint_id: UUID | None = None
+    carried_to_sprint_title: str | None = None
     carryover_count: int = 0
 
 
