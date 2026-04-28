@@ -41,6 +41,37 @@ function parseYmdLocal(ymd: string): Date {
   return new Date(y, mo - 1, d, 12, 0, 0, 0);
 }
 
+const MEETING_LINK_MARKER = 'Meeting link:';
+
+function splitDescriptionAndMeetingLink(value: string | null | undefined): { description: string; meetingLink: string } {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return { description: '', meetingLink: '' };
+  }
+  const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
+  const markerLine = lines.find((line) => line.toLowerCase().startsWith(MEETING_LINK_MARKER.toLowerCase()));
+  if (!markerLine) {
+    return { description: raw, meetingLink: '' };
+  }
+  const meetingLink = markerLine.slice(MEETING_LINK_MARKER.length).trim();
+  const description = lines.filter((line) => line !== markerLine).join('\n').trim();
+  return { description, meetingLink };
+}
+
+function mergeDescriptionWithMeetingLink(description: string, meetingLink: string): string | null {
+  const cleanDescription = description.trim();
+  const cleanLink = meetingLink.trim();
+  if (!cleanDescription && !cleanLink) {
+    return null;
+  }
+  if (!cleanLink) {
+    return cleanDescription || null;
+  }
+  return cleanDescription
+    ? `${cleanDescription}\n${MEETING_LINK_MARKER} ${cleanLink}`
+    : `${MEETING_LINK_MARKER} ${cleanLink}`;
+}
+
 type CalendarEventFormProps = {
   viewKey: string;
   projects: ProjectRecord[];
@@ -69,6 +100,7 @@ export function CalendarEventForm({
   const [projectId, setProjectId] = useState<string | null>(projects[0]?.id ?? null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [meetingLink, setMeetingLink] = useState('');
   const [eventType, setEventType] = useState('meeting');
   const [status, setStatus] = useState('planning');
   const [startAt, setStartAt] = useState<Date | null>(() => {
@@ -99,7 +131,9 @@ export function CalendarEventForm({
     }
     setProjectId(initialEvent.project_id ?? projects[0]?.id ?? null);
     setTitle(initialEvent.title);
-    setDescription(initialEvent.description ?? '');
+    const extracted = splitDescriptionAndMeetingLink(initialEvent.description);
+    setDescription(extracted.description);
+    setMeetingLink(extracted.meetingLink);
     setEventType(initialEvent.event_type);
     setStatus(initialEvent.status);
     setStartAt(new Date(initialEvent.start_at));
@@ -143,6 +177,19 @@ export function CalendarEventForm({
       setError('Set a start date and time.');
       return;
     }
+    if (eventType === 'meeting' && meetingLink.trim()) {
+      try {
+        // Validate meeting links are well-formed URLs (http/https).
+        const parsed = new URL(meetingLink.trim());
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          setError('Meeting link must start with http:// or https://');
+          return;
+        }
+      } catch {
+        setError('Enter a valid meeting link URL.');
+        return;
+      }
+    }
     setSaving(true);
     setError('');
     const milestonePayload = milestones
@@ -161,7 +208,7 @@ export function CalendarEventForm({
         await updateCalendarEventRequest(eventId, {
           project_id: projectId,
           title: title.trim(),
-          description: description.trim() || null,
+          description: mergeDescriptionWithMeetingLink(description, eventType === 'meeting' ? meetingLink : ''),
           event_type: eventType,
           start_at: startAt.toISOString(),
           end_at: endAt ? endAt.toISOString() : null,
@@ -173,7 +220,7 @@ export function CalendarEventForm({
         await createCalendarEventRequest({
           project_id: projectId,
           title: title.trim(),
-          description: description.trim() || null,
+          description: mergeDescriptionWithMeetingLink(description, eventType === 'meeting' ? meetingLink : ''),
           event_type: eventType,
           start_at: startAt.toISOString(),
           end_at: endAt ? endAt.toISOString() : null,
@@ -183,6 +230,7 @@ export function CalendarEventForm({
         });
         setTitle('');
         setDescription('');
+        setMeetingLink('');
         setMilestones([]);
         setTrackProgress(false);
       }
@@ -234,6 +282,25 @@ export function CalendarEventForm({
           </label>
           <InputTextarea id="ce-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="full-width cef-textarea" />
         </div>
+        {eventType === 'meeting' ? (
+          <div className="cef-field calendar-event-field-wide">
+            <label className="cef-label" htmlFor="ce-meeting-link">
+              Meeting link
+            </label>
+            <div className="p-inputgroup cef-inputgroup">
+              <span className="p-inputgroup-addon">
+                <i className="pi pi-link" aria-hidden />
+              </span>
+              <InputText
+                id="ce-meeting-link"
+                value={meetingLink}
+                onChange={(e) => setMeetingLink(e.target.value)}
+                className="full-width"
+                placeholder="https://meet.google.com/... or Teams/Zoom link"
+              />
+            </div>
+          </div>
+        ) : null}
 
         <div className="calendar-event-form-row">
           <div className="cef-field">

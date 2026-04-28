@@ -25,6 +25,7 @@ import {
   getTicketConfigurationRequest,
   getCurrentUserRequest,
   getApprovalNotificationsRequest,
+  getChatNotificationCountRequest,
   getTicketsRequest,
   getUsersRequest,
   patchTicketStatusRequest,
@@ -277,7 +278,7 @@ function App() {
   const [tickets, setTickets] = useState<TicketRecord[]>([]);
   const [isTicketsLoading, setIsTicketsLoading] = useState(false);
   const [ticketsError, setTicketsError] = useState('');
-  const [ticketSearch] = useState('');
+  const [ticketSearch, setTicketSearch] = useState('');
   const [ticketViewMode, setTicketViewMode] = useState<'list' | 'kanban'>('list');
   const [assignableUsers, setAssignableUsers] = useState<UserRecord[]>([]);
   const [sessionProfile, setSessionProfile] = useState<UserRecord | null>(null);
@@ -287,6 +288,10 @@ function App() {
   const [notificationDeleteBusyId, setNotificationDeleteBusyId] = useState<string | null>(null); // notification id
   const [notificationDeleteAllBusy, setNotificationDeleteAllBusy] = useState(false);
   const [focusedTicketIdFromNotification, setFocusedTicketIdFromNotification] = useState<string | null>(null);
+  const [chatNotificationCount, setChatNotificationCount] = useState(0);
+  const chatReactionSinceRef = useRef<string>(new Date().toISOString());
+  const chatNotificationPollInFlightRef = useRef(false);
+  const chatBadgeBackoffUntilRef = useRef(0);
 
   const topNav = roleTopNav[role];
   const selectedPage = useMemo(
@@ -730,6 +735,41 @@ function App() {
     return () => window.clearInterval(timer);
   }, [isAuthenticated, loadPendingApprovalNotifications]);
 
+  const fetchChatBadgeSnapshot = useCallback(async () => {
+    if (Date.now() < chatBadgeBackoffUntilRef.current) {
+      return;
+    }
+    if (chatNotificationPollInFlightRef.current) {
+      return;
+    }
+    chatNotificationPollInFlightRef.current = true;
+    try {
+      const row = await getChatNotificationCountRequest(chatReactionSinceRef.current);
+      chatBadgeBackoffUntilRef.current = 0;
+      setChatNotificationCount(row.total_count);
+      if (row.server_now) {
+        chatReactionSinceRef.current = row.server_now;
+      }
+    } catch {
+      chatBadgeBackoffUntilRef.current = Date.now() + 4000;
+      setChatNotificationCount(0);
+    } finally {
+      chatNotificationPollInFlightRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || (role !== 'teamLead' && role !== 'teamMember')) {
+      setChatNotificationCount(0);
+      return;
+    }
+    void fetchChatBadgeSnapshot();
+    const timer = window.setInterval(() => {
+      void fetchChatBadgeSnapshot();
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [isAuthenticated, role, fetchChatBadgeSnapshot]);
+
   const handleLeadCreateTicket = useCallback(async (payload: TicketCreatePayload) => {
     return createTicketRequest(payload);
   }, []);
@@ -843,6 +883,10 @@ function App() {
   function selectPage(page: NavItem) {
     setActivePage(page.id);
     setActiveModule(page.modules[0] ?? '');
+    if (page.id === 'chat' && (role === 'teamLead' || role === 'teamMember')) {
+      chatReactionSinceRef.current = new Date().toISOString();
+      setChatNotificationCount(0);
+    }
   }
 
   function logout() {
@@ -1387,6 +1431,7 @@ function App() {
         viewKey={`${selectedPage.id}-${currentModule}`}
         ticketModule={currentModule}
         search={ticketSearch}
+        onSearchChange={setTicketSearch}
         viewMode={ticketViewMode}
         onViewModeChange={setTicketViewMode}
         tickets={tickets}
@@ -1568,6 +1613,17 @@ function App() {
               workspaceRole={role}
               topNav={topNav}
               selectedPageId={selectedPage.id}
+              onOpenChat={
+                role === 'teamLead' || role === 'teamMember'
+                  ? () => {
+                      chatReactionSinceRef.current = new Date().toISOString();
+                      setActivePage('chat');
+                      setActiveModule('Inbox');
+                      setChatNotificationCount(0);
+                    }
+                  : undefined
+              }
+              chatNotificationCount={chatNotificationCount}
               onSelectPage={(pageId) => {
                 const page = topNav.find((item) => item.id === pageId);
                 if (page) {

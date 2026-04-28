@@ -5,7 +5,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -14,6 +15,7 @@ from app.dependencies.auth import get_current_lead_or_member
 from app.models import (
     ChatAttachment,
     ChatConversation,
+    ChatConversationMemberPreference,
     ChatMessage,
     ChatMessageRead,
     ChatReaction,
@@ -22,6 +24,8 @@ from app.models import (
 )
 from app.schemas.chat import (
     ChatAttachmentResponse,
+    ChatConversationPreferencesResponse,
+    ChatConversationPreferencesUpdate,
     ChatConversationResponse,
     ChatForwardPayload,
     ChatMessageCreateResponse,
@@ -144,6 +148,89 @@ def _message_to_response(
     )
 
 
+def _remove_attachment_files(attachments: list[ChatAttachment]) -> None:
+    base = Path(settings.chat_upload_dir).resolve()
+    for att in attachments:
+        try:
+            full = (base / att.file_path).resolve()
+            if str(full).startswith(str(base)) and full.is_file():
+                full.unlink(missing_ok=True)
+            parent = full.parent
+            if parent != base and parent.exists():
+                try:
+                    parent.rmdir()
+                except OSError:
+                    pass
+        except Exception:
+            # keep DB operation resilient if file cleanup fails
+            continue
+
+
+@router.get("/notifications/count")
+def get_chat_notification_count(
+    since: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    conversation_ids = db.execute(
+        select(ChatConversation.id).where(
+            or_(
+                ChatConversation.participant_low_id == current.id,
+                ChatConversation.participant_high_id == current.id,
+            )
+        )
+    ).scalars().all()
+
+    if not conversation_ids:
+        now = datetime.now(timezone.utc)
+        return {
+            "unread_messages_count": 0,
+            "reaction_updates_count": 0,
+            "total_count": 0,
+            "server_now": now,
+        }
+
+    unread_messages_count = db.execute(
+        select(func.count(ChatMessage.id))
+        .select_from(ChatMessage)
+        .outerjoin(
+            ChatMessageRead,
+            and_(
+                ChatMessageRead.message_id == ChatMessage.id,
+                ChatMessageRead.user_id == current.id,
+            ),
+        )
+        .where(
+            ChatMessage.conversation_id.in_(conversation_ids),
+            ChatMessage.sender_id != current.id,
+            ChatMessage.deleted_at.is_(None),
+            ChatMessageRead.id.is_(None),
+        )
+    ).scalar_one()
+
+    reaction_stmt = (
+        select(func.count(ChatReaction.id))
+        .select_from(ChatReaction)
+        .join(ChatMessage, ChatMessage.id == ChatReaction.message_id)
+        .where(
+            ChatMessage.conversation_id.in_(conversation_ids),
+            ChatMessage.sender_id == current.id,
+            ChatReaction.user_id != current.id,
+        )
+    )
+    if since is not None:
+        reaction_stmt = reaction_stmt.where(ChatReaction.created_at > since)
+    reaction_updates_count = db.execute(reaction_stmt).scalar_one()
+
+    now = datetime.now(timezone.utc)
+    return {
+        "unread_messages_count": int(unread_messages_count or 0),
+        "reaction_updates_count": int(reaction_updates_count or 0),
+        "total_count": int((unread_messages_count or 0) + (reaction_updates_count or 0)),
+        "server_now": now,
+    }
+
+
 @router.get("/users/search", response_model=list[ChatUserSearchResult])
 def search_chat_users(
     query: str = Query(..., min_length=1),
@@ -197,15 +284,56 @@ def create_chat_request(
                 and_(ChatRequest.requester_id == current.id, ChatRequest.recipient_id == payload.recipient_id),
                 and_(ChatRequest.requester_id == payload.recipient_id, ChatRequest.recipient_id == current.id),
             ),
-            ChatRequest.status == "pending",
         )
+        .order_by(ChatRequest.updated_at.desc())
     ).scalar_one_or_none()
     if existing_request:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A pending chat request already exists")
+        if existing_request.status == "pending":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A pending chat request already exists")
+        if existing_request.status == "approved":
+            convo = db.execute(
+                select(ChatConversation).where(
+                    ChatConversation.participant_low_id == low_id,
+                    ChatConversation.participant_high_id == high_id,
+                )
+            ).scalar_one_or_none()
+            if not convo:
+                approved_by = existing_request.recipient_id if existing_request.recipient_id == current.id else existing_request.requester_id
+                db.add(
+                    ChatConversation(
+                        participant_low_id=low_id,
+                        participant_high_id=high_id,
+                        approved_by=approved_by,
+                        approved_at=existing_request.responded_at or datetime.now(timezone.utc),
+                    )
+                )
+                db.commit()
+            requester = db.get(User, existing_request.requester_id)
+            existing_recipient = db.get(User, existing_request.recipient_id)
+            return ChatRequestResponse(
+                id=existing_request.id,
+                requester_id=existing_request.requester_id,
+                requester_name=requester.name if requester else "Unknown",
+                requester_employee_id=requester.employee_id if requester else None,
+                requester_avatar_url=requester.avatar_url if requester else None,
+                recipient_id=existing_request.recipient_id,
+                recipient_name=existing_recipient.name if existing_recipient else "Unknown",
+                recipient_employee_id=existing_recipient.employee_id if existing_recipient else None,
+                recipient_avatar_url=existing_recipient.avatar_url if existing_recipient else None,
+                status=existing_request.status,
+                created_at=existing_request.created_at,
+                updated_at=existing_request.updated_at,
+                responded_at=existing_request.responded_at,
+            )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A previous chat request already exists")
 
     req = ChatRequest(requester_id=current.id, recipient_id=payload.recipient_id, status="pending")
     db.add(req)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chat request already exists")
     db.refresh(req)
     return ChatRequestResponse(
         id=req.id,
@@ -366,6 +494,17 @@ def list_conversations(
         ).all()
     )
 
+    conv_ids = [c.id for c in conversations]
+    prefs_by_convo: dict[UUID, ChatConversationMemberPreference] = {}
+    if conv_ids:
+        pref_rows = db.execute(
+            select(ChatConversationMemberPreference).where(
+                ChatConversationMemberPreference.user_id == current.id,
+                ChatConversationMemberPreference.conversation_id.in_(conv_ids),
+            )
+        ).scalars().all()
+        prefs_by_convo = {row.conversation_id: row for row in pref_rows}
+
     user_ids = [current.id] + other_ids
     user_rows = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
     name_map = {u.id: u.name for u in user_rows}
@@ -378,6 +517,9 @@ def list_conversations(
         ).scalar_one_or_none()
         other_id = convo.participant_high_id if convo.participant_low_id == current.id else convo.participant_low_id
         other = other_map.get(other_id)
+        pref = prefs_by_convo.get(convo.id)
+        is_pinned = pref.is_pinned if pref else False
+        is_muted = pref.is_muted if pref else False
         out.append(
             ChatConversationResponse(
                 id=convo.id,
@@ -390,9 +532,52 @@ def list_conversations(
                 unread_count=int(unread_counts.get(convo.id, 0)),
                 last_message_at=convo.last_message_at,
                 approved_at=convo.approved_at,
+                is_pinned=is_pinned,
+                is_muted=is_muted,
             )
         )
+
+    def _convo_sort_key(row: ChatConversationResponse) -> tuple[bool, float]:
+        ts = row.last_message_at.timestamp() if row.last_message_at else 0.0
+        return (not row.is_pinned, -ts)
+
+    out.sort(key=_convo_sort_key)
     return out
+
+
+@router.patch(
+    "/conversations/{conversation_id}/preferences",
+    response_model=ChatConversationPreferencesResponse,
+)
+def update_conversation_preferences(
+    conversation_id: UUID,
+    body: ChatConversationPreferencesUpdate,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    convo = _conversation_or_404(db, conversation_id, current.id)
+    pref = db.execute(
+        select(ChatConversationMemberPreference).where(
+            ChatConversationMemberPreference.conversation_id == convo.id,
+            ChatConversationMemberPreference.user_id == current.id,
+        )
+    ).scalar_one_or_none()
+    if pref is None:
+        pref = ChatConversationMemberPreference(
+            conversation_id=convo.id,
+            user_id=current.id,
+            is_pinned=body.is_pinned if body.is_pinned is not None else False,
+            is_muted=body.is_muted if body.is_muted is not None else False,
+        )
+        db.add(pref)
+    else:
+        if body.is_pinned is not None:
+            pref.is_pinned = body.is_pinned
+        if body.is_muted is not None:
+            pref.is_muted = body.is_muted
+    db.commit()
+    db.refresh(pref)
+    return ChatConversationPreferencesResponse(id=convo.id, is_pinned=pref.is_pinned, is_muted=pref.is_muted)
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[ChatMessageResponse])
@@ -649,6 +834,52 @@ def mark_conversation_read(
         if message_id in existing_ids:
             continue
         db.add(ChatMessageRead(message_id=message_id, user_id=current.id, read_at=now))
+    db.commit()
+    return None
+
+
+@router.delete("/conversations/{conversation_id}/messages", status_code=status.HTTP_204_NO_CONTENT)
+def clear_conversation_messages(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    convo = _conversation_or_404(db, conversation_id, current.id)
+    message_ids = db.execute(select(ChatMessage.id).where(ChatMessage.conversation_id == convo.id)).scalars().all()
+    if not message_ids:
+        convo.last_message_at = None
+        db.commit()
+        return None
+
+    attachments = db.execute(select(ChatAttachment).where(ChatAttachment.message_id.in_(message_ids))).scalars().all()
+    _remove_attachment_files(attachments)
+
+    db.execute(delete(ChatMessageRead).where(ChatMessageRead.message_id.in_(message_ids)))
+    db.execute(delete(ChatReaction).where(ChatReaction.message_id.in_(message_ids)))
+    db.execute(delete(ChatAttachment).where(ChatAttachment.message_id.in_(message_ids)))
+    db.execute(delete(ChatMessage).where(ChatMessage.id.in_(message_ids)))
+    convo.last_message_at = None
+    db.commit()
+    return None
+
+
+@router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_conversation(
+    conversation_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    convo = _conversation_or_404(db, conversation_id, current.id)
+    message_ids = db.execute(select(ChatMessage.id).where(ChatMessage.conversation_id == convo.id)).scalars().all()
+    if message_ids:
+        attachments = db.execute(select(ChatAttachment).where(ChatAttachment.message_id.in_(message_ids))).scalars().all()
+        _remove_attachment_files(attachments)
+        db.execute(delete(ChatMessageRead).where(ChatMessageRead.message_id.in_(message_ids)))
+        db.execute(delete(ChatReaction).where(ChatReaction.message_id.in_(message_ids)))
+        db.execute(delete(ChatAttachment).where(ChatAttachment.message_id.in_(message_ids)))
+        db.execute(delete(ChatMessage).where(ChatMessage.id.in_(message_ids)))
+
+    db.delete(convo)
     db.commit()
     return None
 

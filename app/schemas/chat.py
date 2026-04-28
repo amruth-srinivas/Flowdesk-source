@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ChatUserSearchResult(BaseModel):
@@ -92,6 +92,25 @@ class ChatConversationResponse(BaseModel):
     unread_count: int
     last_message_at: datetime | None = None
     approved_at: datetime
+    is_pinned: bool = False
+    is_muted: bool = False
+
+
+class ChatConversationPreferencesUpdate(BaseModel):
+    is_pinned: bool | None = None
+    is_muted: bool | None = None
+
+    @model_validator(mode="after")
+    def at_least_one_field(self) -> "ChatConversationPreferencesUpdate":
+        if self.is_pinned is None and self.is_muted is None:
+            raise ValueError("At least one of is_pinned or is_muted must be provided")
+        return self
+
+
+class ChatConversationPreferencesResponse(BaseModel):
+    id: UUID
+    is_pinned: bool
+    is_muted: bool
 
 
 class ChatMessageCreateResponse(BaseModel):

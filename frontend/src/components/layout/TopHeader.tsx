@@ -1,4 +1,4 @@
-import { Bell, Check, CheckCheck, LogOut, Settings } from 'lucide-react';
+import { Bell, Check, CheckCheck, LogOut, MessageCircle, Settings } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from 'primereact/button';
 import { Chart } from 'primereact/chart';
@@ -60,6 +60,8 @@ type TopHeaderProps = {
   topNav: TopNavItem[];
   selectedPageId: string;
   onSelectPage: (pageId: string) => void;
+  onOpenChat?: () => void;
+  chatNotificationCount?: number;
   workspaceRole?: WorkspaceRole;
   currentUserAvatar: string;
   currentUserAvatarUrl?: string | null;
@@ -93,6 +95,8 @@ export function TopHeader({
   topNav,
   selectedPageId,
   onSelectPage,
+  onOpenChat,
+  chatNotificationCount = 0,
   workspaceRole = 'admin',
   currentUserAvatar,
   currentUserAvatarUrl,
@@ -121,6 +125,9 @@ export function TopHeader({
   onUpdatePassword,
   onLogout,
 }: TopHeaderProps) {
+  const visibleTopNav = useMemo(() => topNav.filter((page) => page.id !== 'chat'), [topNav]);
+  const showChatShortcut = workspaceRole === 'teamLead' || workspaceRole === 'teamMember';
+
   async function handleAcknowledgeClick(item: { request_id: string | null; ticket_id: string }) {
     if (!item.request_id || !onAcknowledgeNotification) {
       return;
@@ -469,7 +476,7 @@ export function TopHeader({
   return (
     <header className="top-header">
       <nav className="top-nav">
-        {topNav.map((page) => (
+        {visibleTopNav.map((page) => (
           <button
             key={page.id}
             className={page.id === selectedPageId ? 'active' : ''}
@@ -494,6 +501,20 @@ export function TopHeader({
       </div>
       <div className="header-actions">
         <div className="header-icon-actions">
+          {showChatShortcut ? (
+            <div className="header-notifications">
+              <button
+                type="button"
+                className="notification-btn"
+                onClick={() => onOpenChat?.()}
+                aria-label="Chat"
+                title="Chat"
+              >
+                <MessageCircle size={16} />
+                {chatNotificationCount > 0 ? <span className="notification-badge">{chatNotificationCount}</span> : null}
+              </button>
+            </div>
+          ) : null}
           <div className="header-notifications">
             <button
               type="button"

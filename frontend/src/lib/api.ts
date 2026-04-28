@@ -1512,6 +1512,15 @@ export type ChatConversationRecord = {
   unread_count: number;
   last_message_at: string | null;
   approved_at: string;
+  is_pinned: boolean;
+  is_muted: boolean;
+};
+
+export type ChatNotificationCountRecord = {
+  unread_messages_count: number;
+  reaction_updates_count: number;
+  total_count: number;
+  server_now: string;
 };
 
 export async function searchChatUsersRequest(query: string): Promise<ChatSearchUserRecord[]> {
@@ -1549,7 +1558,30 @@ export async function actOnChatRequestRequest(
 
 export async function getChatConversationsRequest(): Promise<ChatConversationRecord[]> {
   const response = await fetch(`${API_BASE_URL}/chat/conversations`, { headers: getAuthHeaders() });
-  return parseResponse<ChatConversationRecord[]>(response);
+  const rows = await parseResponse<ChatConversationRecord[]>(response);
+  return rows.map((row) => ({
+    ...row,
+    is_pinned: row.is_pinned ?? false,
+    is_muted: row.is_muted ?? false,
+  }));
+}
+
+export async function patchChatConversationPreferencesRequest(
+  conversationId: string,
+  body: { is_pinned?: boolean; is_muted?: boolean },
+): Promise<{ id: string; is_pinned: boolean; is_muted: boolean }> {
+  const response = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}/preferences`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+  });
+  return parseResponse<{ id: string; is_pinned: boolean; is_muted: boolean }>(response);
+}
+
+export async function getChatNotificationCountRequest(since?: string): Promise<ChatNotificationCountRecord> {
+  const query = since ? `?${new URLSearchParams({ since })}` : '';
+  const response = await fetch(`${API_BASE_URL}/chat/notifications/count${query}`, { headers: getAuthHeaders() });
+  return parseResponse<ChatNotificationCountRecord>(response);
 }
 
 export async function getConversationMessagesRequest(conversationId: string): Promise<ChatMessageRecord[]> {
@@ -1630,6 +1662,22 @@ export async function forwardChatMessageRequest(messageId: string, targetConvers
 export async function markChatConversationReadRequest(conversationId: string): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}/read`, {
     method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
+}
+
+export async function clearChatConversationRequest(conversationId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}/messages`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return parseResponse<void>(response);
+}
+
+export async function deleteChatConversationRequest(conversationId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}`, {
+    method: 'DELETE',
     headers: getAuthHeaders(),
   });
   return parseResponse<void>(response);

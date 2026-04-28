@@ -1,4 +1,5 @@
 import { LayoutGroup, motion } from 'framer-motion';
+import { Search } from 'lucide-react';
 import { Button } from 'primereact/button';
 import { Calendar } from 'primereact/calendar';
 import { Column } from 'primereact/column';
@@ -76,7 +77,7 @@ function isAllowedStatusTransition(from: TicketStatus, to: TicketStatus): boolea
 }
 
 /** Lead “Tickets” page uses these keys with `filterByModule` (same as former sidebar modules). */
-const LEAD_LIST_SCOPE_KEYS = ['Open Tickets', 'Assigned', 'Resolved'] as const;
+const LEAD_LIST_SCOPE_KEYS = ['All Tickets', 'Open Tickets', 'Assigned', 'Resolved'] as const;
 type LeadListScopeKey = (typeof LEAD_LIST_SCOPE_KEYS)[number];
 
 function humanize(s: string): string {
@@ -270,10 +271,12 @@ function applySearch(
     const pn = projectLookup.get(t.project_id) ?? '';
     const an = formatAssigneeLabels(t, userLookup);
     const ref = displayTicketRef(t).toLowerCase();
+    const pub = (t.public_reference ?? '').toLowerCase();
     return (
       t.title.toLowerCase().includes(s) ||
       String(t.ticket_number).includes(s) ||
       ref.includes(s) ||
+      pub.includes(s) ||
       pn.toLowerCase().includes(s) ||
       an.toLowerCase().includes(s) ||
       humanize(t.type).toLowerCase().includes(s) ||
@@ -282,10 +285,44 @@ function applySearch(
   });
 }
 
+function applyListFilters(
+  tickets: TicketRecord[],
+  filters: {
+    projectId: string | null;
+    sprintId: string | null;
+    status: TicketStatus | null;
+    priority: TicketPriority | null;
+    assigneeId: string | null;
+  },
+): TicketRecord[] {
+  return tickets.filter((ticket) => {
+    if (filters.projectId && ticket.project_id !== filters.projectId) {
+      return false;
+    }
+    if (filters.sprintId) {
+      const normalizedSprint = ticket.sprint_id ?? '__backlog__';
+      if (normalizedSprint !== filters.sprintId) {
+        return false;
+      }
+    }
+    if (filters.status && ticket.status !== filters.status) {
+      return false;
+    }
+    if (filters.priority && ticket.priority !== filters.priority) {
+      return false;
+    }
+    if (filters.assigneeId && !(ticket.assignee_ids ?? []).includes(filters.assigneeId)) {
+      return false;
+    }
+    return true;
+  });
+}
+
 type TicketManagementSectionProps = {
   viewKey: string;
   ticketModule: string;
   search: string;
+  onSearchChange: (value: string) => void;
   viewMode: 'list' | 'kanban';
   onViewModeChange: (mode: 'list' | 'kanban') => void;
   tickets: TicketRecord[];
@@ -315,6 +352,7 @@ export function TicketManagementSection({
   viewKey,
   ticketModule,
   search,
+  onSearchChange,
   viewMode,
   onViewModeChange,
   tickets,
@@ -348,7 +386,12 @@ export function TicketManagementSection({
   const [kanbanBusy, setKanbanBusy] = useState<string | null>(null);
   const [kanbanDropError, setKanbanDropError] = useState('');
   const [draggingTicketId, setDraggingTicketId] = useState<string | null>(null);
-  const [leadListScope, setLeadListScope] = useState<LeadListScopeKey>('Open Tickets');
+  const [leadListScope, setLeadListScope] = useState<LeadListScopeKey>('All Tickets');
+  const [listProjectFilter, setListProjectFilter] = useState<string | null>(null);
+  const [listSprintFilter, setListSprintFilter] = useState<string | null>(null);
+  const [listStatusFilter, setListStatusFilter] = useState<TicketStatus | null>(null);
+  const [listPriorityFilter, setListPriorityFilter] = useState<TicketPriority | null>(null);
+  const [listAssigneeFilter, setListAssigneeFilter] = useState<string | null>(null);
   const [statusCommentOpen, setStatusCommentOpen] = useState(false);
   const [statusCommentText, setStatusCommentText] = useState('');
   const [statusCommentSaving, setStatusCommentSaving] = useState(false);
@@ -366,6 +409,9 @@ export function TicketManagementSection({
     source: StatusChangeSource;
   } | null>(null);
   const statusToastRef = useRef<Toast>(null);
+  /** Avoid re-hydrating the edit form when `tickets` gets a new array reference but the row is unchanged (prevents update-depth loops with PrimeReact). */
+  const lastEditHydrateKeyRef = useRef('');
+  const lastFocusHydrateKeyRef = useRef<{ focusId: string; key: string } | null>(null);
 
   const [projectId, setProjectId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
@@ -445,8 +491,30 @@ export function TicketManagementSection({
   }, [ticketModule, isLeadCreateModule, leadListScope]);
 
   const filtered = useMemo(
-    () => applySearch(scoped, search, projectLookup, userLookup),
-    [scoped, search, projectLookup, userLookup],
+    () =>
+      applySearch(
+        applyListFilters(scoped, {
+          projectId: listProjectFilter,
+          sprintId: listSprintFilter,
+          status: listStatusFilter,
+          priority: listPriorityFilter,
+          assigneeId: listAssigneeFilter,
+        }),
+        search,
+        projectLookup,
+        userLookup,
+      ),
+    [
+      scoped,
+      search,
+      projectLookup,
+      userLookup,
+      listProjectFilter,
+      listSprintFilter,
+      listStatusFilter,
+      listPriorityFilter,
+      listAssigneeFilter,
+    ],
   );
 
   const editingTicket = useMemo(
@@ -480,6 +548,48 @@ export function TicketManagementSection({
     () => [{ label: 'None', value: null }, ...customers.map((c) => ({ label: c.name, value: c.id }))],
     [customers],
   );
+  const listProjectOptions = useMemo(
+    () => [{ label: 'All projects', value: null }, ...projects.map((p) => ({ label: p.name, value: p.id }))],
+    [projects],
+  );
+  const listSprintOptions = useMemo(() => {
+    const rows = listProjectFilter
+      ? sprints.filter((s) => (s.project_ids ?? []).includes(listProjectFilter))
+      : sprints;
+    return [
+      { label: 'All sprints', value: null as string | null },
+      { label: 'Backlog', value: '__backlog__' },
+      ...rows.map((s) => ({
+        label: sanitizeSprintTitle(s.title) ?? sprintLabelLookup.get(s.id) ?? 'Sprint',
+        value: s.id,
+      })),
+    ];
+  }, [listProjectFilter, sprints, sprintLabelLookup]);
+  const listStatusOptions = useMemo(
+    () => [{ label: 'All statuses', value: null as TicketStatus | null }, ...STATUSES],
+    [],
+  );
+  const listPriorityOptions = useMemo(
+    () => [{ label: 'All priorities', value: null as TicketPriority | null }, ...PRIORITIES],
+    [],
+  );
+  const listAssigneeOptions = useMemo(
+    () => [{ label: 'All assignees', value: null as string | null }, ...assignableUsers.map((u) => ({ label: u.name, value: u.id }))],
+    [assignableUsers],
+  );
+  const hasActiveListFilters = Boolean(
+    listProjectFilter || listSprintFilter || listStatusFilter || listPriorityFilter || listAssigneeFilter,
+  );
+
+  useEffect(() => {
+    if (!listSprintFilter || listSprintFilter === '__backlog__') {
+      return;
+    }
+    const valid = listSprintOptions.some((opt) => opt.value === listSprintFilter);
+    if (!valid) {
+      setListSprintFilter(null);
+    }
+  }, [listSprintFilter, listSprintOptions]);
 
   const sprintOptionsForCreate = useMemo(() => {
     const none = { label: 'None (backlog)', value: null as string | null };
@@ -527,12 +637,19 @@ export function TicketManagementSection({
 
   useEffect(() => {
     if (!focusTicketId) {
+      lastFocusHydrateKeyRef.current = null;
       return;
     }
     const target = tickets.find((t) => t.id === focusTicketId);
     if (!target) {
       return;
     }
+    const key = `${target.id}|${target.updated_at}|${target.status}|${(target.assignee_ids ?? []).slice().sort().join(',')}`;
+    const prev = lastFocusHydrateKeyRef.current;
+    if (prev && prev.focusId === focusTicketId && prev.key === key) {
+      return;
+    }
+    lastFocusHydrateKeyRef.current = { focusId: focusTicketId, key };
     setEditingId(target.id);
     setPanel('edit');
     hydrateFromTicket(target);
@@ -573,10 +690,21 @@ export function TicketManagementSection({
   }, [viewKey]);
 
   useEffect(() => {
-    if (panel === 'edit' && editingTicket) {
-      hydrateFromTicket(editingTicket);
+    if (panel !== 'edit' || !editingId) {
+      lastEditHydrateKeyRef.current = '';
+      return;
     }
-  }, [panel, editingTicket, hydrateFromTicket]);
+    const row = tickets.find((t) => t.id === editingId);
+    if (!row) {
+      return;
+    }
+    const key = `${row.id}|${row.updated_at}|${row.status}|${(row.assignee_ids ?? []).slice().sort().join(',')}`;
+    if (lastEditHydrateKeyRef.current === key) {
+      return;
+    }
+    lastEditHydrateKeyRef.current = key;
+    hydrateFromTicket(row);
+  }, [panel, editingId, tickets, hydrateFromTicket]);
 
   useEffect(() => {
     if (isLeadCreateModule) {
@@ -619,6 +747,7 @@ export function TicketManagementSection({
     setEditingId(row.id);
     setPanel('edit');
     hydrateFromTicket(row);
+    lastEditHydrateKeyRef.current = `${row.id}|${row.updated_at}|${row.status}|${(row.assignee_ids ?? []).slice().sort().join(',')}`;
   }
 
   function openStatusCommentModal(ticketId: string, nextStatus: TicketStatus, source: StatusChangeSource) {
@@ -870,6 +999,12 @@ export function TicketManagementSection({
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Could not update status';
       setKanbanDropError(msg);
+      statusToastRef.current?.show({
+        severity: 'error',
+        summary: nextStatus === 'closed' ? 'Unable to close ticket' : 'Unable to update status',
+        detail: msg,
+        life: 6500,
+      });
       window.setTimeout(() => setKanbanDropError((cur) => (cur === msg ? '' : cur)), 8000);
     } finally {
       setStatusCommentSaving(false);
@@ -1096,7 +1231,7 @@ export function TicketManagementSection({
   );
 
   const ticketsPageSubLine = isLeadTicketsPage
-    ? `${leadListScope === 'Open Tickets' ? 'Open' : leadListScope} — list or board; details on the right.`
+    ? `${leadListScope === 'Open Tickets' ? 'Open' : leadListScope === 'All Tickets' ? 'All' : leadListScope} — list or board; details on the right.`
     : `${ticketModule} — list or board; details open on the right.`;
 
   return (
@@ -1109,7 +1244,20 @@ export function TicketManagementSection({
     >
       <Toast ref={statusToastRef} position="top-center" />
       <div className={`tickets-workspace ${panel === 'edit' ? 'tickets-workspace--focus' : ''} ${isListOnlyView ? 'tickets-workspace--list-only' : ''}`}>
-        {isLeadCreateModule ? null : <div className="tickets-left-pane">
+        {isLeadCreateModule ? null : (
+          <div className="tickets-left-pane">
+          <div className="tickets-top-search-wrap">
+            <div className="chat-top-search tickets-top-search" role="search">
+              <Search size={16} aria-hidden />
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder="Search by ticket ref or number (e.g. FR0002, SR0001)…"
+                aria-label="Search tickets by reference or number"
+              />
+            </div>
+          </div>
           <div className="tickets-left-head">
             <div>
               <h2 className="tickets-page-title">Tickets</h2>
@@ -1124,7 +1272,7 @@ export function TicketManagementSection({
                   <div className="tickets-lead-tabs" role="tablist" aria-label="Tickets by scope">
                     {LEAD_LIST_SCOPE_KEYS.map((key) => {
                       const active = leadListScope === key;
-                      const label = key === 'Open Tickets' ? 'Open' : key;
+                      const label = key === 'Open Tickets' ? 'Open' : key === 'All Tickets' ? 'All' : key;
                       return (
                         <button
                           key={key}
@@ -1160,6 +1308,27 @@ export function TicketManagementSection({
                 />
               )}
             </div>
+          </div>
+          <div className="tickets-list-filters">
+            <Dropdown value={listProjectFilter} onChange={(e) => setListProjectFilter(e.value)} options={listProjectOptions} className="tickets-list-filter" placeholder="Project" showClear />
+            <Dropdown value={listSprintFilter} onChange={(e) => setListSprintFilter(e.value)} options={listSprintOptions} className="tickets-list-filter" placeholder="Sprint" showClear />
+            <Dropdown value={listStatusFilter} onChange={(e) => setListStatusFilter(e.value)} options={listStatusOptions} className="tickets-list-filter" placeholder="Status" showClear />
+            <Dropdown value={listPriorityFilter} onChange={(e) => setListPriorityFilter(e.value)} options={listPriorityOptions} className="tickets-list-filter" placeholder="Priority" showClear />
+            <Dropdown value={listAssigneeFilter} onChange={(e) => setListAssigneeFilter(e.value)} options={listAssigneeOptions} className="tickets-list-filter" placeholder="Assignee" showClear />
+            <Button
+              type="button"
+              label="Clear filters"
+              text
+              className="tickets-clear-filters"
+              disabled={!hasActiveListFilters}
+              onClick={() => {
+                setListProjectFilter(null);
+                setListSprintFilter(null);
+                setListStatusFilter(null);
+                setListPriorityFilter(null);
+                setListAssigneeFilter(null);
+              }}
+            />
           </div>
 
           {error ? <p className="error-text tickets-banner-error">{error}</p> : null}
@@ -1494,7 +1663,8 @@ export function TicketManagementSection({
               ))}
             </div>
           )}
-        </div>}
+        </div>
+        )}
 
         {isListOnlyView ? null : (
           <div className="tickets-right-pane">
