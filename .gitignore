@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# Local user uploads (attachments, chat files) — never commit
+uploads/

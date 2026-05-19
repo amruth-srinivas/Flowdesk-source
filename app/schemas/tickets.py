@@ -7,15 +7,25 @@ from app.constants.enums import ApprovalStatus, TicketPriority, TicketStatus, Ti
 
 
 class TicketCreate(BaseModel):
-    title: str
-    description: str | None = None
+    title: str = Field(..., max_length=300)
+    description: str = Field(..., max_length=20_000)
     type: TicketType
     priority: TicketPriority = TicketPriority.MEDIUM
     project_id: UUID
-    assigned_to: list[UUID] = Field(default_factory=list)
-    customer_id: UUID | None = None
-    due_date: date | None = None
+    assigned_to: list[UUID] = Field(..., min_length=1)
+    customer_id: UUID
+    due_date: date
     sprint_id: UUID | None = None
+
+    @field_validator("title", "description", mode="before")
+    @classmethod
+    def strip_required_text(cls, value):
+        if value is None:
+            raise ValueError("This field is required")
+        text = str(value).strip()
+        if not text:
+            raise ValueError("Cannot be empty")
+        return text
 
 
 class TicketUpdate(BaseModel):

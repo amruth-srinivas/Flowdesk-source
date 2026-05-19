@@ -15,6 +15,7 @@ import { Tag } from 'primereact/tag';
 import { Toast } from 'primereact/toast';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TicketDetailTabs } from './TicketDetailTabs';
+import { isTicketDraftValid, ticketDraftValidationMessage } from './ticketDraftValidation';
 import { getSprintsRequest } from '../../lib/api';
 import {
   createTicketApprovalRequest,
@@ -62,6 +63,16 @@ const STATUSES: { label: string; value: TicketStatus }[] = [
 ];
 
 const KANBAN_ORDER: TicketStatus[] = ['open', 'in_progress', 'in_review', 'resolved', 'closed'];
+
+const STATUS_UPDATE_QUICK_REPLIES = [
+  'Done',
+  'Waiting for approval',
+  'Reviewed',
+  'Closed',
+  'In progress',
+  'Need a discussion',
+  'Facing a blocker',
+] as const;
 
 /** Matches server `STATUS_FLOW` — Kanban may only move one step per drop. */
 const STATUS_FLOW_NEXT: Record<TicketStatus, TicketStatus[]> = {
@@ -296,12 +307,15 @@ function applyListFilters(
   },
 ): TicketRecord[] {
   return tickets.filter((ticket) => {
-    if (filters.projectId && ticket.project_id !== filters.projectId) {
+    const projectId = filters.projectId ? String(filters.projectId) : null;
+    const sprintId = filters.sprintId ? String(filters.sprintId) : null;
+    const assigneeId = filters.assigneeId ? String(filters.assigneeId) : null;
+    if (projectId && String(ticket.project_id) !== projectId) {
       return false;
     }
-    if (filters.sprintId) {
-      const normalizedSprint = ticket.sprint_id ?? '__backlog__';
-      if (normalizedSprint !== filters.sprintId) {
+    if (sprintId) {
+      const normalizedSprint = ticket.sprint_id ? String(ticket.sprint_id) : '__backlog__';
+      if (normalizedSprint !== sprintId) {
         return false;
       }
     }
@@ -311,7 +325,7 @@ function applyListFilters(
     if (filters.priority && ticket.priority !== filters.priority) {
       return false;
     }
-    if (filters.assigneeId && !(ticket.assignee_ids ?? []).includes(filters.assigneeId)) {
+    if (assigneeId && !(ticket.assignee_ids ?? []).map((id) => String(id)).includes(assigneeId)) {
       return false;
     }
     return true;
@@ -375,6 +389,15 @@ export function TicketManagementSection({
   canDeleteTickets,
   focusTicketId,
 }: TicketManagementSectionProps) {
+  const normalizeFilterValue = <T,>(value: T | null | undefined): T | null => {
+    if (value == null) {
+      return null;
+    }
+    if (typeof value === 'string' && !value.trim()) {
+      return null;
+    }
+    return value;
+  };
   type Panel = 'none' | 'create' | 'edit';
   type StatusChangeSource = 'list' | 'kanban';
   const [panel, setPanel] = useState<Panel>('none');
@@ -544,14 +567,24 @@ export function TicketManagementSection({
     () => assignableUsers.map((u) => ({ label: `${u.name} (${u.employee_id})`, value: u.id })),
     [assignableUsers],
   );
-  const customerOptions = useMemo(
-    () => [{ label: 'None', value: null }, ...customers.map((c) => ({ label: c.name, value: c.id }))],
-    [customers],
+  const customerOptions = useMemo(() => customers.map((c) => ({ label: c.name, value: c.id })), [customers]);
+
+  const ticketDraftIsValid = useMemo(
+    () =>
+      isTicketDraftValid({
+        projectId,
+        title,
+        description,
+        assigneeIds,
+        customerId,
+        dueDate,
+      }),
+    [projectId, title, description, assigneeIds, customerId, dueDate],
   );
-  const listProjectOptions = useMemo(
-    () => [{ label: 'All projects', value: null }, ...projects.map((p) => ({ label: p.name, value: p.id }))],
-    [projects],
-  );
+  const listProjectOptions = useMemo(() => {
+    const used = new Set(scoped.map((t) => t.project_id));
+    return [{ label: 'All projects', value: null }, ...projects.filter((p) => used.has(p.id)).map((p) => ({ label: p.name, value: p.id }))];
+  }, [projects, scoped]);
   const listSprintOptions = useMemo(() => {
     const rows = listProjectFilter
       ? sprints.filter((s) => (s.project_ids ?? []).includes(listProjectFilter))
@@ -565,18 +598,21 @@ export function TicketManagementSection({
       })),
     ];
   }, [listProjectFilter, sprints, sprintLabelLookup]);
-  const listStatusOptions = useMemo(
-    () => [{ label: 'All statuses', value: null as TicketStatus | null }, ...STATUSES],
-    [],
-  );
-  const listPriorityOptions = useMemo(
-    () => [{ label: 'All priorities', value: null as TicketPriority | null }, ...PRIORITIES],
-    [],
-  );
-  const listAssigneeOptions = useMemo(
-    () => [{ label: 'All assignees', value: null as string | null }, ...assignableUsers.map((u) => ({ label: u.name, value: u.id }))],
-    [assignableUsers],
-  );
+  const listStatusOptions = useMemo(() => {
+    const used = new Set(scoped.map((t) => t.status));
+    return [{ label: 'All statuses', value: null as TicketStatus | null }, ...STATUSES.filter((opt) => used.has(opt.value as TicketStatus))];
+  }, [scoped]);
+  const listPriorityOptions = useMemo(() => {
+    const used = new Set(scoped.map((t) => t.priority));
+    return [{ label: 'All priorities', value: null as TicketPriority | null }, ...PRIORITIES.filter((opt) => used.has(opt.value as TicketPriority))];
+  }, [scoped]);
+  const listAssigneeOptions = useMemo(() => {
+    const used = new Set(scoped.flatMap((t) => t.assignee_ids ?? []));
+    return [
+      { label: 'All assignees', value: null as string | null },
+      ...assignableUsers.filter((u) => used.has(u.id)).map((u) => ({ label: u.name, value: u.id })),
+    ];
+  }, [assignableUsers, scoped]);
   const hasActiveListFilters = Boolean(
     listProjectFilter || listSprintFilter || listStatusFilter || listPriorityFilter || listAssigneeFilter,
   );
@@ -883,12 +919,16 @@ export function TicketManagementSection({
   }
 
   async function submitCreate() {
-    if (!projectId) {
-      setFormError('Select a project.');
-      return;
-    }
-    if (!title.trim()) {
-      setFormError('Enter a title.');
+    const draftErr = ticketDraftValidationMessage({
+      projectId,
+      title,
+      description,
+      assigneeIds,
+      customerId,
+      dueDate,
+    });
+    if (draftErr) {
+      setFormError(draftErr);
       return;
     }
     setSaving(true);
@@ -896,13 +936,13 @@ export function TicketManagementSection({
     try {
       const created = await onCreateTicket({
         title: title.trim(),
-        description: description.trim() || null,
+        description: description.trim(),
         type: ticketType,
         priority,
-        project_id: projectId,
+        project_id: projectId!,
         assigned_to: assigneeIds,
-        customer_id: customerId,
-        due_date: dueDate ? toYmd(dueDate) : null,
+        customer_id: customerId!,
+        due_date: toYmd(dueDate!),
         sprint_id: createSprintId,
       });
       onRefresh();
@@ -920,12 +960,16 @@ export function TicketManagementSection({
     if (ticketRole !== 'lead' || !canEditTicketFields || !editingTicket) {
       return;
     }
-    if (!projectId) {
-      setFormError('Select a project.');
-      return;
-    }
-    if (!title.trim()) {
-      setFormError('Enter a title.');
+    const draftErr = ticketDraftValidationMessage({
+      projectId,
+      title,
+      description,
+      assigneeIds,
+      customerId,
+      dueDate,
+    });
+    if (draftErr) {
+      setFormError(draftErr);
       return;
     }
     setSaving(true);
@@ -933,13 +977,13 @@ export function TicketManagementSection({
     try {
       const next = await onUpdateTicket(editingTicket.id, {
         title: title.trim(),
-        description: description.trim() || null,
+        description: description.trim(),
         type: ticketType,
         priority,
-        project_id: projectId,
+        project_id: projectId!,
         assigned_to: assigneeIds,
-        customer_id: customerId,
-        due_date: dueDate ? toYmd(dueDate) : null,
+        customer_id: customerId!,
+        due_date: toYmd(dueDate!),
       });
       onRefresh();
       setEditingId(next.id);
@@ -973,11 +1017,13 @@ export function TicketManagementSection({
     openStatusCommentModal(ticketId, status, 'kanban');
   }
 
-  async function confirmStatusChangeWithComment() {
-    if (!pendingStatusChange) {
+  async function confirmStatusChangeWithComment(commentOverride?: string) {
+    if (!pendingStatusChange || statusCommentSaving) {
       return;
     }
     const { ticketId, nextStatus, source } = pendingStatusChange;
+    const comment =
+      commentOverride !== undefined ? commentOverride.trim() : statusCommentText.trim();
     if (source === 'kanban') {
       setKanbanBusy(ticketId);
     } else {
@@ -985,7 +1031,7 @@ export function TicketManagementSection({
     }
     setStatusCommentSaving(true);
     try {
-      await onPatchStatus(ticketId, nextStatus, statusCommentText);
+      await onPatchStatus(ticketId, nextStatus, comment || null);
       statusToastRef.current?.show({
         severity: 'success',
         summary: 'Status updated',
@@ -1053,7 +1099,7 @@ export function TicketManagementSection({
 
         <div className="ticket-form-field ticket-form-field--full">
           <label className="ticket-form-label" htmlFor={`tf-project-${viewKey}`}>
-            Project
+            Project <span className="ticket-form-label-required" aria-hidden>*</span>
           </label>
           <div className="p-inputgroup">
             <span className="p-inputgroup-addon">
@@ -1115,13 +1161,15 @@ export function TicketManagementSection({
               onChange={(e) => setTitle(e.target.value)}
               maxLength={300}
             />
-            <label htmlFor={`tf-title-${viewKey}`}>Title</label>
+            <label htmlFor={`tf-title-${viewKey}`}>
+              Title <span className="ticket-form-label-required" aria-hidden>*</span>
+            </label>
           </FloatLabel>
         </div>
 
         <div className="ticket-form-field ticket-form-field--full">
           <label className="ticket-form-label" htmlFor={`tf-desc-${viewKey}`}>
-            Description
+            Description <span className="ticket-form-label-required" aria-hidden>*</span>
           </label>
           <InputTextarea
             id={`tf-desc-${viewKey}`}
@@ -1160,7 +1208,9 @@ export function TicketManagementSection({
 
         <div className="ticket-form-row">
           <div className="ticket-form-field">
-            <label className="ticket-form-label">Assignees</label>
+            <label className="ticket-form-label">
+              Assignees <span className="ticket-form-label-required" aria-hidden>*</span>
+            </label>
             <div className="p-inputgroup">
               <span className="p-inputgroup-addon">
                 <i className="pi pi-users" />
@@ -1178,7 +1228,9 @@ export function TicketManagementSection({
             </div>
           </div>
           <div className="ticket-form-field">
-            <label className="ticket-form-label">Customer</label>
+            <label className="ticket-form-label">
+              Customer <span className="ticket-form-label-required" aria-hidden>*</span>
+            </label>
             <div className="p-inputgroup">
               <span className="p-inputgroup-addon">
                 <i className="pi pi-building" />
@@ -1186,16 +1238,19 @@ export function TicketManagementSection({
               <Dropdown
                 value={customerId}
                 options={customerOptions}
-                onChange={(e) => setCustomerId(e.value as string | null)}
+                onChange={(e) => setCustomerId((e.value as string | null) ?? null)}
                 className="full-width"
                 filter
+                placeholder="Select customer"
               />
             </div>
           </div>
         </div>
 
         <div className="ticket-form-field ticket-form-field--full">
-          <label className="ticket-form-label">Due date</label>
+          <label className="ticket-form-label">
+            Due date <span className="ticket-form-label-required" aria-hidden>*</span>
+          </label>
           <Calendar value={dueDate} onChange={(e) => setDueDate((e.value as Date) || null)} showIcon className="full-width ticket-due-cal" />
         </div>
 
@@ -1208,7 +1263,7 @@ export function TicketManagementSection({
             label={saving ? 'Saving…' : 'Create ticket'}
             icon="pi pi-check"
             onClick={() => void submitCreate()}
-            disabled={saving}
+            disabled={saving || !ticketDraftIsValid}
           />
         </div>
       </div>
@@ -1310,11 +1365,11 @@ export function TicketManagementSection({
             </div>
           </div>
           <div className="tickets-list-filters">
-            <Dropdown value={listProjectFilter} onChange={(e) => setListProjectFilter(e.value)} options={listProjectOptions} className="tickets-list-filter" placeholder="Project" showClear />
-            <Dropdown value={listSprintFilter} onChange={(e) => setListSprintFilter(e.value)} options={listSprintOptions} className="tickets-list-filter" placeholder="Sprint" showClear />
-            <Dropdown value={listStatusFilter} onChange={(e) => setListStatusFilter(e.value)} options={listStatusOptions} className="tickets-list-filter" placeholder="Status" showClear />
-            <Dropdown value={listPriorityFilter} onChange={(e) => setListPriorityFilter(e.value)} options={listPriorityOptions} className="tickets-list-filter" placeholder="Priority" showClear />
-            <Dropdown value={listAssigneeFilter} onChange={(e) => setListAssigneeFilter(e.value)} options={listAssigneeOptions} className="tickets-list-filter" placeholder="Assignee" showClear />
+            <Dropdown value={listProjectFilter} onChange={(e) => setListProjectFilter(normalizeFilterValue(e.value as string | null | undefined))} options={listProjectOptions} className="tickets-list-filter" placeholder="Project" showClear />
+            <Dropdown value={listSprintFilter} onChange={(e) => setListSprintFilter(normalizeFilterValue(e.value as string | null | undefined))} options={listSprintOptions} className="tickets-list-filter" placeholder="Sprint" showClear />
+            <Dropdown value={listStatusFilter} onChange={(e) => setListStatusFilter(normalizeFilterValue(e.value as TicketStatus | null | undefined))} options={listStatusOptions} className="tickets-list-filter" placeholder="Status" showClear />
+            <Dropdown value={listPriorityFilter} onChange={(e) => setListPriorityFilter(normalizeFilterValue(e.value as TicketPriority | null | undefined))} options={listPriorityOptions} className="tickets-list-filter" placeholder="Priority" showClear />
+            <Dropdown value={listAssigneeFilter} onChange={(e) => setListAssigneeFilter(normalizeFilterValue(e.value as string | null | undefined))} options={listAssigneeOptions} className="tickets-list-filter" placeholder="Assignee" showClear />
             <Button
               type="button"
               label="Clear filters"
@@ -1765,7 +1820,7 @@ export function TicketManagementSection({
                             </div>
                             <div className="ticket-form-field ticket-form-field--full">
                               <label className="ticket-form-label" htmlFor={`ts-project-${viewKey}`}>
-                                Project
+                                Project <span className="ticket-form-label-required" aria-hidden>*</span>
                               </label>
                               {canEditTicketFields ? (
                                 <Dropdown
@@ -1782,7 +1837,7 @@ export function TicketManagementSection({
                             </div>
                             <div className="ticket-form-field ticket-form-field--full">
                               <label className="ticket-form-label" htmlFor={`ts-desc-${viewKey}`}>
-                                Description
+                                Description <span className="ticket-form-label-required" aria-hidden>*</span>
                               </label>
                               {canEditTicketFields ? (
                                 <InputTextarea
@@ -1837,7 +1892,9 @@ export function TicketManagementSection({
                             </div>
                             <div className="ticket-form-row">
                               <div className="ticket-form-field">
-                                <label className="ticket-form-label">Assignees</label>
+                                <label className="ticket-form-label">
+                                  Assignees <span className="ticket-form-label-required" aria-hidden>*</span>
+                                </label>
                                 {canEditTicketFields ? (
                                   <div className="ticket-assignees-editable">
                                     <div className="p-inputgroup">
@@ -1880,24 +1937,29 @@ export function TicketManagementSection({
                                 )}
                               </div>
                               <div className="ticket-form-field">
-                                <label className="ticket-form-label">Customer</label>
+                                <label className="ticket-form-label">
+                                  Customer <span className="ticket-form-label-required" aria-hidden>*</span>
+                                </label>
                                 {canEditTicketFields ? (
                                   <Dropdown
                                     value={customerId}
                                     options={customerOptions}
-                                    onChange={(e) => setCustomerId(e.value as string | null)}
+                                    onChange={(e) => setCustomerId((e.value as string | null) ?? null)}
                                     className="full-width"
                                     filter
+                                    placeholder="Select customer"
                                   />
                                 ) : (
                                   <div className="ticket-locked-field">
-                                    {customers.find((c) => c.id === customerId)?.name ?? 'None'}
+                                    {customers.find((c) => c.id === customerId)?.name ?? '—'}
                                   </div>
                                 )}
                               </div>
                             </div>
                             <div className="ticket-form-field ticket-form-field--full">
-                              <label className="ticket-form-label">Due date</label>
+                              <label className="ticket-form-label">
+                                Due date <span className="ticket-form-label-required" aria-hidden>*</span>
+                              </label>
                               {canEditTicketFields ? (
                                 <Calendar
                                   value={dueDate}
@@ -1922,7 +1984,7 @@ export function TicketManagementSection({
                                   label={saving ? 'Saving…' : 'Save changes'}
                                   icon="pi pi-check"
                                   onClick={() => void submitEdit()}
-                                  disabled={saving}
+                                  disabled={saving || !ticketDraftIsValid}
                                 />
                               </div>
                             ) : null}
@@ -2019,8 +2081,23 @@ export function TicketManagementSection({
       >
         <div className="ticket-status-comment-body">
           <p className="ticket-status-comment-help">
-            Add a comment for this status change (optional).
+            Add a comment for this status change (optional), or pick a quick reply to update immediately.
           </p>
+          <div className="ticket-status-quick-replies" role="group" aria-label="Quick replies">
+            <div className="ticket-status-quick-replies-chips">
+              {STATUS_UPDATE_QUICK_REPLIES.map((reply) => (
+                <button
+                  key={reply}
+                  type="button"
+                  className="ticket-status-quick-reply-chip"
+                  disabled={statusCommentSaving}
+                  onClick={() => void confirmStatusChangeWithComment(reply)}
+                >
+                  {reply}
+                </button>
+              ))}
+            </div>
+          </div>
           <InputTextarea
             value={statusCommentText}
             onChange={(e) => setStatusCommentText(e.target.value)}

@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -243,10 +243,11 @@ def _user_avatar_url(db: Session, user_id: UUID) -> str | None:
     return u.avatar_url if u else None
 
 
-def _resolution_to_response(db: Session, r: Resolution) -> ResolutionResponse:
+def _resolution_to_response(db: Session, r: Resolution, *, cycle_id: UUID | None = None) -> ResolutionResponse:
     return ResolutionResponse(
         id=r.id,
         ticket_id=r.ticket_id,
+        ticket_cycle_id=cycle_id,
         resolved_by=r.resolved_by,
         resolver_name=_user_name(db, r.resolved_by),
         resolver_avatar_url=_user_avatar_url(db, r.resolved_by),
@@ -257,6 +258,17 @@ def _resolution_to_response(db: Session, r: Resolution) -> ResolutionResponse:
         created_at=r.created_at,
         updated_at=r.updated_at,
     )
+
+
+def _legacy_resolution_for_cycle(db: Session, ticket: Ticket, cycle: TicketCycle) -> Resolution | None:
+    """Pre-cycle resolutions table: expose on v1 or the active cycle only."""
+    legacy = db.execute(select(Resolution).where(Resolution.ticket_id == ticket.id)).scalar_one_or_none()
+    if not legacy:
+        return None
+    active = _get_or_create_active_cycle(db, ticket)
+    if cycle.id == active.id or cycle.version_no == 1:
+        return legacy
+    return None
 
 
 def _cycle_resolution_to_response(db: Session, r: TicketCycleResolution) -> ResolutionResponse:
@@ -1142,7 +1154,11 @@ def list_history(ticket_id: str, db: Session = Depends(get_db), user=Depends(get
     ]
 
 
-@router.get("/{ticket_id}/resolution", response_model=ResolutionResponse)
+@router.get(
+    "/{ticket_id}/resolution",
+    response_model=ResolutionResponse,
+    responses={204: {"description": "No resolution for this cycle"}},
+)
 def get_resolution(
     ticket_id: str,
     cycle_id: UUID | None = Query(default=None),
@@ -1160,9 +1176,12 @@ def get_resolution(
             TicketCycleResolution.ticket_cycle_id == cycle.id,
         )
     ).scalar_one_or_none()
-    if not r:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No resolution recorded")
-    return _cycle_resolution_to_response(db, r)
+    if r:
+        return _cycle_resolution_to_response(db, r)
+    legacy = _legacy_resolution_for_cycle(db, ticket, cycle)
+    if legacy:
+        return _resolution_to_response(db, legacy, cycle_id=cycle.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/{ticket_id}/resolution", response_model=ResolutionResponse)

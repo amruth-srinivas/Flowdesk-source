@@ -46,6 +46,7 @@ class SprintTicketBrief(BaseModel):
     title: str
     status: str
     priority: str
+    assignee_ids: list[UUID] = Field(default_factory=list)
     assignee_names: list[str] = Field(default_factory=list)
     carried_from_sprint_id: UUID | None = None
     carried_from_sprint_title: str | None = None

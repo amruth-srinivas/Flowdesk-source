@@ -136,7 +136,7 @@ function BodyFormatToolbar({ textareaRef, value, onChange }: ToolbarProps) {
         rounded
         text
         title="Bullet line"
-        onClick={() => apply((t, s, e) => insertLinePrefix(t, s, '- '))}
+        onClick={() => apply((t, s, _e) => insertLinePrefix(t, s, '- '))}
       />
       <Button
         type="button"
@@ -145,7 +145,7 @@ function BodyFormatToolbar({ textareaRef, value, onChange }: ToolbarProps) {
         rounded
         text
         title="Numbered line"
-        onClick={() => apply((t, s, e) => insertLinePrefix(t, s, '1. '))}
+        onClick={() => apply((t, s, _e) => insertLinePrefix(t, s, '1. '))}
       />
       <Button
         type="button"

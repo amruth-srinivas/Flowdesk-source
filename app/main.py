@@ -2,6 +2,7 @@ import logging
 import threading
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.db_migrations import (
@@ -22,6 +23,7 @@ from app.core.db_migrations import (
     apply_ticket_history_note_migration,
     apply_ticket_overdue_migration,
     apply_ticket_public_reference_migration,
+    apply_chat_group_migrations,
 )
 from app.core.database import Base, SessionLocal, engine
 from app.routes import chat, customers, auth, events_tasks, kb, personal_tasks, project_documents, projects, sprints, ticket_configuration, tickets, users
@@ -34,6 +36,16 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title=settings.app_name, debug=settings.debug)
 _rollover_stop_event = threading.Event()
 _rollover_thread: threading.Thread | None = None
+
+_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -71,6 +83,7 @@ def startup() -> None:
     apply_ticket_overdue_migration(engine)
     apply_ticket_carryover_migration(engine)
     apply_ticket_cycles_migration(engine)
+    apply_chat_group_migrations(engine)
     apply_ticket_closed_by_migration(engine)
     apply_user_avatar_url_migration(engine)
     apply_user_theme_preference_migration(engine)

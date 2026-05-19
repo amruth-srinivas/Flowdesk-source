@@ -62,6 +62,12 @@ const SPRINT_TYPES = [
 
 const SPRINT_TYPE_CUSTOM = '__custom__';
 
+const SPRINT_STATUS_OPTIONS = [
+  { label: 'Planning', value: 'planning' },
+  { label: 'Active', value: 'active' },
+  { label: 'Completed', value: 'completed' },
+];
+
 const WIZARD_STEP_LABELS = ['Sprint details', 'Projects', 'Tickets', 'Preview & confirm'];
 
 function slugifySprintType(raw: string): string {
@@ -403,8 +409,6 @@ function SprintsMemberView({ viewKey, activeModule }: { viewKey: string; activeM
     };
   }, [historyAnalytics, currentUserId]);
 
-  const statusEntries = analytics ? Object.entries(analytics.by_status).sort(([a], [b]) => a.localeCompare(b)) : [];
-
   const monitoringTickets = useMemo(() => {
     const fromAnalytics = analytics?.tickets ?? [];
     const fromSprintList = ticketsInSprint.map((t) => ({
@@ -413,6 +417,7 @@ function SprintsMemberView({ viewKey, activeModule }: { viewKey: string; activeM
       title: t.title,
       status: t.status,
       priority: t.priority,
+      assignee_ids: t.assignee_ids ?? [],
       assignee_names: t.assignee_names ?? [],
       carried_from_sprint_id: t.carried_from_sprint_id ?? null,
       carried_from_sprint_title: null,
@@ -864,7 +869,11 @@ function SprintsMemberView({ viewKey, activeModule }: { viewKey: string; activeM
                   <Column
                     header="Carryover"
                     style={{ width: '190px' }}
-                    body={(row: { carried_from_sprint_title?: string | null; carryover_count?: number }) =>
+                    body={(row: {
+                      carried_from_sprint_title?: string | null;
+                      carried_to_sprint_title?: string | null;
+                      carryover_count?: number;
+                    }) =>
                       row.carryover_count || row.carried_to_sprint_title ? (
                         <Tag value={carryoverLabel(row)} severity="warning" className="sprints-carryover-tag" />
                       ) : (
@@ -989,6 +998,8 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
   const [saving, setSaving] = useState(false);
   const [ticketBusy, setTicketBusy] = useState<string | null>(null);
 
+  const [editOpen, setEditOpen] = useState(false);
+  const [editStatus, setEditStatus] = useState('planning');
   const [createTicketOpen, setCreateTicketOpen] = useState(false);
   const [createTicketNonce, setCreateTicketNonce] = useState(0);
   const [createTicketSaving, setCreateTicketSaving] = useState(false);
@@ -1078,25 +1089,84 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
     resetWizardForm();
   }
 
-  function handleWizardStep1Next() {
-    setError(null);
+  function validateSprintDetailsForm(requireProjects = false): string | null {
     if (!title.trim()) {
-      setError('Enter a sprint title.');
-      return;
+      return 'Enter a sprint title.';
     }
     if (!startDate) {
-      setError('Choose a start date.');
-      return;
+      return 'Choose a start date.';
     }
     if (!durationDays || durationDays < 1) {
-      setError('Set the sprint length to at least one day.');
-      return;
+      return 'Set the sprint length to at least one day.';
     }
     if (sprintTypeChoice === SPRINT_TYPE_CUSTOM && !customTypeLabel.trim()) {
-      setError('Enter a name for your custom sprint type, or pick a preset.');
+      return 'Enter a name for your custom sprint type, or pick a preset.';
+    }
+    if (requireProjects && !projectIds.length) {
+      return 'Select at least one project for this sprint.';
+    }
+    return null;
+  }
+
+  function handleWizardStep1Next() {
+    setError(null);
+    const validationError = validateSprintDetailsForm(false);
+    if (validationError) {
+      setError(validationError);
       return;
     }
     setWizardStep(2);
+  }
+
+  function openEditDialog() {
+    if (!selectedSprint) {
+      return;
+    }
+    syncFormFromSprint(selectedSprint);
+    setEditStatus(selectedSprint.status || 'planning');
+    setError(null);
+    setEditOpen(true);
+  }
+
+  function closeEditDialog() {
+    if (saving) {
+      return;
+    }
+    if (selectedSprint) {
+      syncFormFromSprint(selectedSprint);
+    }
+    setEditOpen(false);
+    setError(null);
+  }
+
+  async function handleSaveEdit() {
+    if (!isLead || !selectedSprintId) {
+      return;
+    }
+    const validationError = validateSprintDetailsForm(true);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateSprintRequest(selectedSprintId, {
+        title: title.trim(),
+        sprint_type: resolveSprintType(),
+        duration_days: durationDays || 14,
+        start_date: toYmd(startDate!),
+        project_ids: projectIds,
+        status: editStatus.trim() || 'planning',
+      });
+      setSprints((cur) => cur.map((s) => (s.id === updated.id ? updated : s)));
+      setEditOpen(false);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not update sprint');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleWizardStep2Next() {
@@ -1755,16 +1825,29 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
               className="sprints-input sprints-dropdown-wide"
             />
             {isLead && selectedSprintId ? (
-              <Button
-                type="button"
-                icon="pi pi-trash"
-                severity="danger"
-                text
-                rounded
-                aria-label="Delete sprint"
-                onClick={() => void handleDeleteSprint(selectedSprintId)}
-                disabled={saving}
-              />
+              <div className="sprints-picker-actions">
+                <Button
+                  type="button"
+                  icon="pi pi-pencil"
+                  severity="secondary"
+                  text
+                  rounded
+                  aria-label="Edit sprint"
+                  title="Edit sprint"
+                  onClick={openEditDialog}
+                  disabled={saving || !selectedSprint}
+                />
+                <Button
+                  type="button"
+                  icon="pi pi-trash"
+                  severity="danger"
+                  text
+                  rounded
+                  aria-label="Delete sprint"
+                  onClick={() => void handleDeleteSprint(selectedSprintId)}
+                  disabled={saving}
+                />
+              </div>
             ) : null}
           </div>
 
@@ -1871,6 +1954,121 @@ function SprintsConfiguration({ viewKey, isLead }: { viewKey: string; isLead: bo
           )}
         </section>
       ) : null}
+
+      <Dialog
+        header="Edit sprint"
+        visible={editOpen}
+        className="sprints-edit-dialog"
+        style={{ width: 'min(640px, 96vw)' }}
+        onHide={closeEditDialog}
+        dismissableMask={!saving}
+        closable={!saving}
+        footer={
+          <div className="sprints-edit-dialog-footer">
+            <Button type="button" label="Cancel" severity="secondary" text onClick={closeEditDialog} disabled={saving} />
+            <Button
+              type="button"
+              label="Save changes"
+              icon="pi pi-check"
+              onClick={() => void handleSaveEdit()}
+              loading={saving}
+              disabled={saving}
+            />
+          </div>
+        }
+      >
+        {editOpen && selectedSprint ? (
+          <>
+            <p className="sprints-wizard-lead">
+              Update schedule, projects, and status for <strong>{selectedSprint.title}</strong>. Adding projects exposes
+              more backlog tickets on the board below.
+            </p>
+            <div className="sprints-form-grid">
+              <div className="sprints-field">
+                <label htmlFor="edit-sprint-title">Sprint title</label>
+                <InputText
+                  id="edit-sprint-title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="sprints-input"
+                />
+              </div>
+              <div className="sprints-field">
+                <label htmlFor="edit-sprint-start">Start date</label>
+                <Calendar
+                  id="edit-sprint-start"
+                  value={startDate}
+                  onChange={(ev) => {
+                    const v = ev.value as Date | Date[] | null;
+                    const d = Array.isArray(v) ? v[0] : v;
+                    if (d) setStartDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
+                  }}
+                  dateFormat="yy-mm-dd"
+                  showIcon
+                  className="sprints-calendar"
+                />
+              </div>
+              <div className="sprints-field">
+                <label htmlFor="edit-sprint-days">Days per sprint</label>
+                <InputNumber
+                  inputId="edit-sprint-days"
+                  value={durationDays}
+                  onValueChange={(e) => setDurationDays(e.value ?? 14)}
+                  min={1}
+                  max={120}
+                  showButtons
+                  className="sprints-input"
+                />
+              </div>
+              <div className="sprints-field">
+                <label htmlFor="edit-sprint-type">Sprint type</label>
+                <Dropdown
+                  inputId="edit-sprint-type"
+                  value={sprintTypeChoice}
+                  options={sprintTypeDropdownOptions}
+                  onChange={(e) => setSprintTypeChoice(e.value as string)}
+                  className="sprints-input"
+                />
+              </div>
+              {sprintTypeChoice === SPRINT_TYPE_CUSTOM ? (
+                <div className="sprints-field sprints-field-span">
+                  <label htmlFor="edit-sprint-custom-type">Custom type name</label>
+                  <InputText
+                    id="edit-sprint-custom-type"
+                    value={customTypeLabel}
+                    onChange={(e) => setCustomTypeLabel(e.target.value)}
+                    placeholder="e.g. Compliance push"
+                    className="sprints-input"
+                  />
+                  <span className="sprints-field-hint">Stored as: {resolveSprintType()}</span>
+                </div>
+              ) : null}
+              <div className="sprints-field">
+                <label htmlFor="edit-sprint-status">Status</label>
+                <Dropdown
+                  inputId="edit-sprint-status"
+                  value={editStatus}
+                  options={SPRINT_STATUS_OPTIONS}
+                  onChange={(e) => setEditStatus(e.value as string)}
+                  className="sprints-input"
+                />
+              </div>
+              <div className="sprints-field sprints-field-span">
+                <label htmlFor="edit-sprint-projects">Projects</label>
+                <MultiSelect
+                  id="edit-sprint-projects"
+                  value={projectIds}
+                  options={projectOptions}
+                  onChange={(e) => setProjectIds((e.value as string[]) ?? [])}
+                  display="chip"
+                  placeholder="Select one or more projects"
+                  className="sprints-input"
+                />
+              </div>
+            </div>
+          </>
+        ) : null}
+      </Dialog>
 
       <Dialog
         header="New ticket"

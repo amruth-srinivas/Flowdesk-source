@@ -8,7 +8,14 @@ import { InputText } from 'primereact/inputtext';
 import { Password } from 'primereact/password';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { CalendarEventRecord, ThemePreference, TicketApprovalNotificationRecord, TicketRecord, UserSelfUpdatePayload } from '../../lib/api';
+import type {
+  CalendarEventRecord,
+  ChatActivityNotificationRecord,
+  ThemePreference,
+  TicketApprovalNotificationRecord,
+  TicketRecord,
+  UserSelfUpdatePayload,
+} from '../../lib/api';
 
 type WorkspaceRole = 'admin' | 'teamLead' | 'teamMember';
 
@@ -76,6 +83,7 @@ type TopHeaderProps = {
   tickets?: TicketRecord[];
   events?: CalendarEventRecord[];
   notifications: TicketApprovalNotificationRecord[];
+  chatActivityNotifications?: ChatActivityNotificationRecord[];
   notificationBusyId?: string | null; // request_id for acknowledge
   notificationReadBusyId?: string | null; // notification_id for mark read
   notificationDeleteBusyId?: string | null; // notification_id for delete
@@ -111,6 +119,7 @@ export function TopHeader({
   tickets = [],
   events = [],
   notifications,
+  chatActivityNotifications = [],
   notificationBusyId,
   notificationReadBusyId,
   notificationDeleteBusyId,
@@ -125,6 +134,11 @@ export function TopHeader({
   onUpdatePassword,
   onLogout,
 }: TopHeaderProps) {
+  function chatActivityLabel(type: string): string {
+    if (type === 'mention') return 'Mentioned you';
+    if (type === 'reaction') return 'Reacted to your message';
+    return 'New message';
+  }
   const visibleTopNav = useMemo(() => topNav.filter((page) => page.id !== 'chat'), [topNav]);
   const showChatShortcut = workspaceRole === 'teamLead' || workspaceRole === 'teamMember';
 
@@ -569,13 +583,13 @@ export function TopHeader({
         modal
         dismissableMask
       >
-        {notifications.length ? (
+        {notifications.length || chatActivityNotifications.length ? (
           <div className="notification-inbox">
             <div className="notification-inbox-toolbar" aria-live="polite">
               <span className="notification-inbox-toolbar-label">
-                <strong>{notifications.length}</strong>
+                <strong>{notifications.length + chatActivityNotifications.length}</strong>
                 <span className="notification-inbox-toolbar-muted">
-                  {notifications.length === 1 ? ' item' : ' items'}
+                  {notifications.length + chatActivityNotifications.length === 1 ? ' item' : ' items'}
                 </span>
               </span>
               <div className="notification-inbox-toolbar-right">
@@ -598,6 +612,33 @@ export function TopHeader({
                 )}
               </div>
             </div>
+            {chatActivityNotifications.length ? (
+              <div className="notification-chat-activity">
+                <h3 className="notification-chat-activity-heading">Chat activity</h3>
+                <ul className="notification-chat-activity-list">
+                  {chatActivityNotifications.map((item) => (
+                    <li key={item.id} className="notification-chat-activity-item">
+                      <div className="notification-chat-activity-avatar" aria-hidden>
+                        {item.actor_avatar_url ? (
+                          <img src={item.actor_avatar_url} alt="" />
+                        ) : (
+                          <span>{(item.actor_name ?? '?').slice(0, 1).toUpperCase()}</span>
+                        )}
+                      </div>
+                      <div className="notification-chat-activity-body">
+                        <div className="notification-chat-activity-row">
+                          <strong>{item.actor_name ?? item.conversation_user_name ?? 'Chat'}</strong>
+                          <span>{chatActivityLabel(item.activity_type)}</span>
+                          {item.emoji ? <span className="notification-chat-activity-emoji">{item.emoji}</span> : null}
+                        </div>
+                        <p>{item.body_preview ?? 'New chat activity'}</p>
+                        <small>{formatNotificationRelativeTime(item.created_at)}</small>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <ul className="notification-inbox-list">
               {notifications.map((item) => {
                 const statusKey = (item.ticket_status ?? 'open').toLowerCase().replace(/\s+/g, '_');

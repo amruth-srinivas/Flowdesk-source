@@ -34,6 +34,7 @@ import {
   markApprovalNotificationReadRequest,
   deleteApprovalNotificationRequest,
   deleteAllApprovalNotificationsRequest,
+  getChatNotificationActivityRequest,
   updateTicketRequest,
   loginRequest,
   type CustomerContact,
@@ -44,6 +45,7 @@ import {
   type TicketApprovalNotificationRecord,
   type TicketConfigurationRecord,
   type TicketCreatePayload,
+  type ChatActivityNotificationRecord,
   type TicketRecord,
   type TicketStatus,
   type TicketReopenPayload,
@@ -289,6 +291,7 @@ function App() {
   const [notificationDeleteAllBusy, setNotificationDeleteAllBusy] = useState(false);
   const [focusedTicketIdFromNotification, setFocusedTicketIdFromNotification] = useState<string | null>(null);
   const [chatNotificationCount, setChatNotificationCount] = useState(0);
+  const [chatActivityNotifications, setChatActivityNotifications] = useState<ChatActivityNotificationRecord[]>([]);
   const chatReactionSinceRef = useRef<string>(new Date().toISOString());
   const chatNotificationPollInFlightRef = useRef(false);
   const chatBadgeBackoffUntilRef = useRef(0);
@@ -745,14 +748,17 @@ function App() {
     chatNotificationPollInFlightRef.current = true;
     try {
       const row = await getChatNotificationCountRequest(chatReactionSinceRef.current);
+      const activity = await getChatNotificationActivityRequest();
       chatBadgeBackoffUntilRef.current = 0;
       setChatNotificationCount(row.total_count);
+      setChatActivityNotifications(activity);
       if (row.server_now) {
         chatReactionSinceRef.current = row.server_now;
       }
     } catch {
       chatBadgeBackoffUntilRef.current = Date.now() + 4000;
       setChatNotificationCount(0);
+      setChatActivityNotifications([]);
     } finally {
       chatNotificationPollInFlightRef.current = false;
     }
@@ -761,6 +767,7 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated || (role !== 'teamLead' && role !== 'teamMember')) {
       setChatNotificationCount(0);
+      setChatActivityNotifications([]);
       return;
     }
     void fetchChatBadgeSnapshot();
@@ -1573,7 +1580,16 @@ function App() {
 
     if (selectedPage.id === 'chat') {
       if (role === 'teamLead' || role === 'teamMember') {
-        return <ChatWorkspace currentUserId={sessionProfile?.id ?? null} />;
+        return (
+          <ChatWorkspace
+            currentUserId={sessionProfile?.id ?? null}
+            currentUserName={sessionProfile?.name ?? null}
+            currentUserEmployeeId={sessionProfile?.employee_id ?? null}
+            currentUserDesignation={sessionProfile?.designation ?? null}
+            currentUserAvatarUrl={sessionProfile?.avatar_url ?? null}
+            currentUserEmail={sessionProfile?.email ?? null}
+          />
+        );
       }
       return renderDefaultContent();
     }
@@ -1620,10 +1636,12 @@ function App() {
                       setActivePage('chat');
                       setActiveModule('Inbox');
                       setChatNotificationCount(0);
+                      setChatActivityNotifications([]);
                     }
                   : undefined
               }
               chatNotificationCount={chatNotificationCount}
+              chatActivityNotifications={chatActivityNotifications}
               onSelectPage={(pageId) => {
                 const page = topNav.find((item) => item.id === pageId);
                 if (page) {

@@ -201,6 +201,7 @@ def sprint_analytics(sprint_id: UUID, db: Session = Depends(get_db), user: User 
                 title=t.title,
                 status=st,
                 priority=pr,
+                assignee_ids=list(t.assignee_ids or []),
                 assignee_names=names,
                 carried_from_sprint_id=t.carried_from_sprint_id,
                 carried_from_sprint_title=carried_from_title_by_id.get(t.carried_from_sprint_id) if t.carried_from_sprint_id else None,

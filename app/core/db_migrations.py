@@ -957,5 +957,121 @@ def apply_ticket_cycles_migration(engine: Engine) -> None:
                         ),
                         {"cid": cycle_id, "ticket_id": row["id"]},
                     )
+
+            if "resolutions" in tables and "ticket_cycle_resolutions" in tables:
+                logger.info("Backfilling ticket_cycle_resolutions from legacy resolutions")
+                legacy_rows = conn.execute(
+                    text(
+                        """
+                        SELECT id, ticket_id, resolved_by, summary, root_cause, steps_taken,
+                               kb_article_id, created_at, updated_at
+                        FROM resolutions
+                        """
+                    )
+                ).mappings().all()
+                for res in legacy_rows:
+                    cycle_row = conn.execute(
+                        text(
+                            """
+                            SELECT id FROM ticket_cycles
+                            WHERE ticket_id = :ticket_id
+                            ORDER BY version_no ASC
+                            LIMIT 1
+                            """
+                        ),
+                        {"ticket_id": res["ticket_id"]},
+                    ).mappings().one_or_none()
+                    if not cycle_row:
+                        continue
+                    cycle_id = cycle_row["id"]
+                    already = conn.execute(
+                        text(
+                            "SELECT 1 FROM ticket_cycle_resolutions WHERE ticket_cycle_id = :cycle_id LIMIT 1"
+                        ),
+                        {"cycle_id": cycle_id},
+                    ).first()
+                    if already:
+                        continue
+                    new_id = str(uuid.uuid4())
+                    if dialect == "postgresql":
+                        conn.execute(
+                            text(
+                                """
+                                INSERT INTO ticket_cycle_resolutions (
+                                  id, ticket_id, ticket_cycle_id, resolved_by, summary,
+                                  root_cause, steps_taken, kb_article_id, created_at, updated_at
+                                ) VALUES (
+                                  :id, :ticket_id, :cycle_id, :resolved_by, :summary,
+                                  :root_cause, :steps_taken, :kb_article_id, :created_at, :updated_at
+                                )
+                                """
+                            ),
+                            {
+                                "id": new_id,
+                                "ticket_id": res["ticket_id"],
+                                "cycle_id": cycle_id,
+                                "resolved_by": res["resolved_by"],
+                                "summary": res["summary"],
+                                "root_cause": res["root_cause"],
+                                "steps_taken": res["steps_taken"],
+                                "kb_article_id": res["kb_article_id"],
+                                "created_at": res["created_at"],
+                                "updated_at": res["updated_at"],
+                            },
+                        )
     except Exception as exc:
         logger.warning("Ticket cycle migration failed: %s", exc)
+
+
+def apply_chat_group_migrations(engine: Engine) -> None:
+    """Add missing columns/tables for group chat parity features."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+    except Exception as exc:
+        logger.warning("Could not inspect database for chat group migrations: %s", exc)
+        return
+
+    if "chat_group_messages" not in tables:
+        return
+
+    dialect = engine.dialect.name
+    columns = {col["name"] for col in inspector.get_columns("chat_group_messages")}
+
+    try:
+        with engine.begin() as conn:
+            if "reply_to_message_id" not in columns:
+                logger.info("Adding chat_group_messages.reply_to_message_id column")
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE chat_group_messages ADD COLUMN IF NOT EXISTS reply_to_message_id UUID REFERENCES chat_group_messages(id) ON DELETE SET NULL"
+                        )
+                    )
+                else:
+                    conn.execute(text("ALTER TABLE chat_group_messages ADD COLUMN reply_to_message_id VARCHAR(36)"))
+            if "forwarded_from_message_id" not in columns:
+                logger.info("Adding chat_group_messages.forwarded_from_message_id column")
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(
+                            "ALTER TABLE chat_group_messages ADD COLUMN IF NOT EXISTS forwarded_from_message_id UUID REFERENCES chat_group_messages(id) ON DELETE SET NULL"
+                        )
+                    )
+                else:
+                    conn.execute(text("ALTER TABLE chat_group_messages ADD COLUMN forwarded_from_message_id VARCHAR(36)"))
+            if "edited_at" not in columns:
+                logger.info("Adding chat_group_messages.edited_at column")
+                if dialect == "postgresql":
+                    conn.execute(text("ALTER TABLE chat_group_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ"))
+                else:
+                    conn.execute(text("ALTER TABLE chat_group_messages ADD COLUMN edited_at DATETIME"))
+            if "deleted_at" not in columns:
+                logger.info("Adding chat_group_messages.deleted_at column")
+                if dialect == "postgresql":
+                    conn.execute(text("ALTER TABLE chat_group_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_group_messages_deleted_at ON chat_group_messages (deleted_at)"))
+                else:
+                    conn.execute(text("ALTER TABLE chat_group_messages ADD COLUMN deleted_at DATETIME"))
+    except Exception as exc:
+        logger.warning("Chat group column migration failed: %s", exc)

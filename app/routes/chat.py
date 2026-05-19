@@ -16,6 +16,11 @@ from app.models import (
     ChatAttachment,
     ChatConversation,
     ChatConversationMemberPreference,
+    ChatGroup,
+    ChatGroupMember,
+    ChatGroupAttachment,
+    ChatGroupMessage,
+    ChatGroupReaction,
     ChatMessage,
     ChatMessageRead,
     ChatReaction,
@@ -23,11 +28,18 @@ from app.models import (
     User,
 )
 from app.schemas.chat import (
+    ChatActivityNotificationResponse,
     ChatAttachmentResponse,
     ChatConversationPreferencesResponse,
     ChatConversationPreferencesUpdate,
     ChatConversationResponse,
     ChatForwardPayload,
+    ChatGroupCreate,
+    ChatGroupForwardPayload,
+    ChatGroupMessageCreateResponse,
+    ChatGroupMessageCreate,
+    ChatGroupMessageResponse,
+    ChatGroupResponse,
     ChatMessageCreateResponse,
     ChatMessagePreview,
     ChatMessageResponse,
@@ -222,13 +234,212 @@ def get_chat_notification_count(
         reaction_stmt = reaction_stmt.where(ChatReaction.created_at > since)
     reaction_updates_count = db.execute(reaction_stmt).scalar_one()
 
+    group_unread_count = 0
+    if since is not None:
+        group_ids = db.execute(
+            select(ChatGroupMember.group_id).where(ChatGroupMember.user_id == current.id)
+        ).scalars().all()
+        if group_ids:
+            group_unread_count = int(
+                db.execute(
+                    select(func.count(ChatGroupMessage.id)).where(
+                        ChatGroupMessage.group_id.in_(group_ids),
+                        ChatGroupMessage.sender_id != current.id,
+                        ChatGroupMessage.created_at > since,
+                    )
+                ).scalar_one()
+                or 0
+            )
+
     now = datetime.now(timezone.utc)
     return {
-        "unread_messages_count": int(unread_messages_count or 0),
+        "unread_messages_count": int((unread_messages_count or 0) + group_unread_count),
         "reaction_updates_count": int(reaction_updates_count or 0),
-        "total_count": int((unread_messages_count or 0) + (reaction_updates_count or 0)),
+        "total_count": int((unread_messages_count or 0) + group_unread_count + (reaction_updates_count or 0)),
         "server_now": now,
     }
+
+
+@router.get("/notifications/activity", response_model=list[ChatActivityNotificationResponse])
+def get_chat_notification_activity(
+    since: datetime | None = Query(None),
+    limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    conversation_rows = db.execute(
+        select(ChatConversation.id, ChatConversation.participant_low_id, ChatConversation.participant_high_id).where(
+            or_(
+                ChatConversation.participant_low_id == current.id,
+                ChatConversation.participant_high_id == current.id,
+            )
+        )
+    ).all()
+    if not conversation_rows:
+        return []
+
+    conversation_ids = [row.id for row in conversation_rows]
+    other_user_ids = [
+        row.participant_high_id if row.participant_low_id == current.id else row.participant_low_id for row in conversation_rows
+    ]
+    user_rows = db.execute(select(User.id, User.name, User.avatar_url).where(User.id.in_(other_user_ids))).all()
+    user_map = {row.id: {"name": row.name, "avatar_url": row.avatar_url} for row in user_rows}
+    convo_other_map = {
+        row.id: row.participant_high_id if row.participant_low_id == current.id else row.participant_low_id for row in conversation_rows
+    }
+
+    unread_stmt = (
+        select(ChatMessage)
+        .outerjoin(
+            ChatMessageRead,
+            and_(
+                ChatMessageRead.message_id == ChatMessage.id,
+                ChatMessageRead.user_id == current.id,
+            ),
+        )
+        .where(
+            ChatMessage.conversation_id.in_(conversation_ids),
+            ChatMessage.sender_id != current.id,
+            ChatMessage.deleted_at.is_(None),
+            ChatMessageRead.id.is_(None),
+        )
+    )
+    if since is not None:
+        unread_stmt = unread_stmt.where(ChatMessage.created_at > since)
+    unread_rows = db.execute(unread_stmt.order_by(ChatMessage.created_at.desc()).limit(limit)).scalars().all()
+
+    reaction_stmt = (
+        select(ChatReaction, ChatMessage)
+        .join(ChatMessage, ChatMessage.id == ChatReaction.message_id)
+        .where(
+            ChatMessage.conversation_id.in_(conversation_ids),
+            ChatMessage.sender_id == current.id,
+            ChatReaction.user_id != current.id,
+        )
+    )
+    if since is not None:
+        reaction_stmt = reaction_stmt.where(ChatReaction.created_at > since)
+    reaction_rows = db.execute(reaction_stmt.order_by(ChatReaction.created_at.desc()).limit(limit)).all()
+
+    mention_stmt = (
+        select(ChatMessage)
+        .where(
+            ChatMessage.conversation_id.in_(conversation_ids),
+            ChatMessage.sender_id != current.id,
+            ChatMessage.deleted_at.is_(None),
+            ChatMessage.body.is_not(None),
+            ChatMessage.body.ilike(f"%@{current.name}%"),
+        )
+    )
+    if since is not None:
+        mention_stmt = mention_stmt.where(ChatMessage.created_at > since)
+    mention_rows = db.execute(mention_stmt.order_by(ChatMessage.created_at.desc()).limit(limit)).scalars().all()
+
+    group_ids = db.execute(
+        select(ChatGroupMember.group_id).where(ChatGroupMember.user_id == current.id)
+    ).scalars().all()
+    group_rows = (
+        db.execute(select(ChatGroup.id, ChatGroup.name).where(ChatGroup.id.in_(group_ids))).all()
+        if group_ids
+        else []
+    )
+    group_name_map = {row.id: row.name for row in group_rows}
+    group_msg_stmt = select(ChatGroupMessage).where(
+        ChatGroupMessage.group_id.in_(group_ids) if group_ids else False,
+        ChatGroupMessage.sender_id != current.id,
+    )
+    if since is not None:
+        group_msg_stmt = group_msg_stmt.where(ChatGroupMessage.created_at > since)
+    group_msg_rows = db.execute(group_msg_stmt.order_by(ChatGroupMessage.created_at.desc()).limit(limit)).scalars().all()
+
+    activity: list[ChatActivityNotificationResponse] = []
+
+    for msg in unread_rows:
+        actor = user_map.get(msg.sender_id, {"name": "Unknown", "avatar_url": None})
+        other_user_id = convo_other_map.get(msg.conversation_id)
+        other_user = user_map.get(other_user_id, {"name": "Unknown"})
+        activity.append(
+            ChatActivityNotificationResponse(
+                id=f"msg-{msg.id}",
+                activity_type="new_message",
+                conversation_id=msg.conversation_id,
+                message_id=msg.id,
+                actor_id=msg.sender_id,
+                actor_name=actor["name"],
+                actor_avatar_url=actor["avatar_url"],
+                conversation_user_name=other_user["name"],
+                body_preview=(msg.body or "").strip()[:140] or "Sent an attachment",
+                created_at=msg.created_at,
+            )
+        )
+
+    for reaction, msg in reaction_rows:
+        actor = user_map.get(reaction.user_id, {"name": "Unknown", "avatar_url": None})
+        other_user_id = convo_other_map.get(msg.conversation_id)
+        other_user = user_map.get(other_user_id, {"name": "Unknown"})
+        activity.append(
+            ChatActivityNotificationResponse(
+                id=f"react-{reaction.id}",
+                activity_type="reaction",
+                conversation_id=msg.conversation_id,
+                message_id=msg.id,
+                actor_id=reaction.user_id,
+                actor_name=actor["name"],
+                actor_avatar_url=actor["avatar_url"],
+                conversation_user_name=other_user["name"],
+                body_preview=(msg.body or "").strip()[:140] or "Reacted to your attachment",
+                emoji=reaction.emoji,
+                created_at=reaction.created_at,
+            )
+        )
+
+    for msg in mention_rows:
+        actor = user_map.get(msg.sender_id, {"name": "Unknown", "avatar_url": None})
+        other_user_id = convo_other_map.get(msg.conversation_id)
+        other_user = user_map.get(other_user_id, {"name": "Unknown"})
+        activity.append(
+            ChatActivityNotificationResponse(
+                id=f"mention-{msg.id}",
+                activity_type="mention",
+                conversation_id=msg.conversation_id,
+                message_id=msg.id,
+                actor_id=msg.sender_id,
+                actor_name=actor["name"],
+                actor_avatar_url=actor["avatar_url"],
+                conversation_user_name=other_user["name"],
+                body_preview=(msg.body or "").strip()[:140],
+                created_at=msg.created_at,
+            )
+        )
+
+    for msg in group_msg_rows:
+        actor = db.get(User, msg.sender_id)
+        activity.append(
+            ChatActivityNotificationResponse(
+                id=f"group-msg-{msg.id}",
+                activity_type="new_message",
+                conversation_id=msg.group_id,
+                message_id=msg.id,
+                actor_id=msg.sender_id,
+                actor_name=actor.name if actor else "Unknown",
+                actor_avatar_url=actor.avatar_url if actor else None,
+                conversation_user_name=group_name_map.get(msg.group_id, "Group chat"),
+                body_preview=(msg.body or "").strip()[:140] or "Sent a message in group",
+                created_at=msg.created_at,
+            )
+        )
+
+    activity.sort(key=lambda row: row.created_at, reverse=True)
+    dedup: list[ChatActivityNotificationResponse] = []
+    seen_ids: set[str] = set()
+    for row in activity:
+        if row.id in seen_ids:
+            continue
+        seen_ids.add(row.id)
+        dedup.append(row)
+        if len(dedup) >= limit:
+            break
+    return dedup
 
 
 @router.get("/users/search", response_model=list[ChatUserSearchResult])
@@ -451,6 +662,405 @@ def act_on_chat_request(
         updated_at=req.updated_at,
         responded_at=req.responded_at,
     )
+
+
+def _group_or_404(db: Session, group_id: UUID, current_user_id: UUID) -> ChatGroup:
+    group = db.get(ChatGroup, group_id)
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    member = db.execute(
+        select(ChatGroupMember).where(
+            ChatGroupMember.group_id == group.id,
+            ChatGroupMember.user_id == current_user_id,
+        )
+    ).scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this group")
+    return group
+
+
+def _group_message_to_response(db: Session, row: ChatGroupMessage, current_user_id: UUID | None = None) -> ChatGroupMessageResponse:
+    sender = db.get(User, row.sender_id)
+    group_member_ids = db.execute(
+        select(ChatGroupMember.user_id).where(ChatGroupMember.group_id == row.group_id)
+    ).scalars().all()
+    user_map = _user_name_map(db, group_member_ids)
+    reply_to = db.get(ChatGroupMessage, row.reply_to_message_id) if row.reply_to_message_id else None
+    forwarded_from = db.get(ChatGroupMessage, row.forwarded_from_message_id) if row.forwarded_from_message_id else None
+    attachments = db.execute(
+        select(ChatGroupAttachment)
+        .where(ChatGroupAttachment.group_message_id == row.id)
+        .order_by(ChatGroupAttachment.created_at.asc())
+    ).scalars().all()
+    reactions = db.execute(select(ChatGroupReaction).where(ChatGroupReaction.group_message_id == row.id)).scalars().all()
+    grouped: dict[str, list[ChatGroupReaction]] = {}
+    for reaction in reactions:
+        grouped.setdefault(reaction.emoji, []).append(reaction)
+    reaction_out: list[ChatReactionResponse] = []
+    for emoji, rows in grouped.items():
+        reaction_out.append(
+            ChatReactionResponse(
+                emoji=emoji,
+                count=len(rows),
+                reacted_by_me=any(r.user_id == current_user_id for r in rows) if current_user_id else False,
+                reacted_by_names=[user_map.get(r.user_id, "Unknown") for r in rows],
+            )
+        )
+    reaction_out.sort(key=lambda x: x.emoji)
+    return ChatGroupMessageResponse(
+        id=row.id,
+        group_id=row.group_id,
+        sender_id=row.sender_id,
+        sender_name=sender.name if sender else "Unknown",
+        sender_avatar_url=sender.avatar_url if sender else None,
+        body=row.body,
+        reply_to=(
+            ChatMessagePreview(
+                id=reply_to.id,
+                sender_id=reply_to.sender_id,
+                sender_name=user_map.get(reply_to.sender_id, "Unknown"),
+                body=reply_to.body,
+                created_at=reply_to.created_at,
+                edited_at=reply_to.edited_at,
+                deleted_at=reply_to.deleted_at,
+            )
+            if reply_to
+            else None
+        ),
+        forwarded_from=(
+            ChatMessagePreview(
+                id=forwarded_from.id,
+                sender_id=forwarded_from.sender_id,
+                sender_name=user_map.get(forwarded_from.sender_id, "Unknown"),
+                body=forwarded_from.body,
+                created_at=forwarded_from.created_at,
+                edited_at=forwarded_from.edited_at,
+                deleted_at=forwarded_from.deleted_at,
+            )
+            if forwarded_from
+            else None
+        ),
+        attachments=[
+            ChatAttachmentResponse(
+                id=att.id,
+                filename=att.filename,
+                file_size_bytes=att.file_size_bytes,
+                mime_type=att.mime_type,
+                uploaded_by=att.uploaded_by,
+                uploaded_by_name=user_map.get(att.uploaded_by, "Unknown"),
+                created_at=att.created_at,
+            )
+            for att in attachments
+        ],
+        reactions=reaction_out,
+        is_read_by_other=False,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        edited_at=row.edited_at,
+        deleted_at=row.deleted_at,
+    )
+
+
+@router.post("/groups", response_model=ChatGroupResponse, status_code=status.HTTP_201_CREATED)
+def create_group(
+    payload: ChatGroupCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    raw_name = payload.name.strip()
+    if len(raw_name) < 2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Group name is required")
+    member_ids = list({*payload.member_ids, current.id})
+    users = db.execute(select(User).where(User.id.in_(member_ids), User.is_active.is_(True))).scalars().all()
+    valid_member_ids = [user.id for user in users]
+    if len(valid_member_ids) < 2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one member")
+
+    group = ChatGroup(name=raw_name, created_by=current.id)
+    db.add(group)
+    db.flush()
+    db.add_all([ChatGroupMember(group_id=group.id, user_id=user_id) for user_id in valid_member_ids])
+    db.commit()
+    db.refresh(group)
+    member_names = [user.name for user in users]
+    member_avatars = [user.avatar_url for user in users]
+    return ChatGroupResponse(
+        id=group.id,
+        name=group.name,
+        created_by=group.created_by,
+        member_ids=valid_member_ids,
+        member_names=member_names,
+        member_avatars=member_avatars,
+        last_message_at=None,
+        unread_count=0,
+    )
+
+
+@router.get("/groups", response_model=list[ChatGroupResponse])
+def list_groups(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    group_ids = db.execute(
+        select(ChatGroupMember.group_id).where(ChatGroupMember.user_id == current.id)
+    ).scalars().all()
+    if not group_ids:
+        return []
+    groups = db.execute(
+        select(ChatGroup).where(ChatGroup.id.in_(group_ids)).order_by(ChatGroup.updated_at.desc())
+    ).scalars().all()
+    out: list[ChatGroupResponse] = []
+    for group in groups:
+        members = db.execute(
+            select(ChatGroupMember.user_id).where(ChatGroupMember.group_id == group.id)
+        ).scalars().all()
+        users = db.execute(select(User).where(User.id.in_(members))).scalars().all() if members else []
+        last_message = db.execute(
+            select(ChatGroupMessage).where(ChatGroupMessage.group_id == group.id).order_by(ChatGroupMessage.created_at.desc()).limit(1)
+        ).scalar_one_or_none()
+        out.append(
+            ChatGroupResponse(
+                id=group.id,
+                name=group.name,
+                created_by=group.created_by,
+                member_ids=[u.id for u in users],
+                member_names=[u.name for u in users],
+                member_avatars=[u.avatar_url for u in users],
+                last_message_at=last_message.created_at if last_message else None,
+                unread_count=0,
+            )
+        )
+    out.sort(key=lambda row: row.last_message_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return out
+
+
+@router.get("/groups/{group_id}/messages", response_model=list[ChatGroupMessageResponse])
+def get_group_messages(
+    group_id: UUID,
+    before: datetime | None = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    group = _group_or_404(db, group_id, current.id)
+    stmt = select(ChatGroupMessage).where(ChatGroupMessage.group_id == group.id)
+    if before:
+        stmt = stmt.where(ChatGroupMessage.created_at < before)
+    rows = db.execute(stmt.order_by(ChatGroupMessage.created_at.desc()).limit(limit)).scalars().all()
+    rows.reverse()
+    return [_group_message_to_response(db, row, current.id) for row in rows]
+
+
+@router.post("/groups/{group_id}/messages", response_model=ChatGroupMessageCreateResponse, status_code=status.HTTP_201_CREATED)
+async def post_group_message(
+    group_id: UUID,
+    body: str | None = Form(None),
+    reply_to_message_id: UUID | None = Form(None),
+    forwarded_from_message_id: UUID | None = Form(None),
+    attachments: list[UploadFile] = File(default=[]),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    group = _group_or_404(db, group_id, current.id)
+    trimmed = (body or "").strip()
+    if not trimmed and not attachments and not forwarded_from_message_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message body or attachment required")
+    if reply_to_message_id:
+        parent = db.get(ChatGroupMessage, reply_to_message_id)
+        if not parent or parent.group_id != group.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid reply target")
+    if forwarded_from_message_id:
+        fwd = db.get(ChatGroupMessage, forwarded_from_message_id)
+        if not fwd or fwd.group_id != group.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid forwarded message")
+
+    message = ChatGroupMessage(
+        group_id=group.id,
+        sender_id=current.id,
+        body=trimmed or None,
+        reply_to_message_id=reply_to_message_id,
+        forwarded_from_message_id=forwarded_from_message_id,
+    )
+    db.add(message)
+    db.flush()
+    upload_root = Path(settings.chat_upload_dir)
+    for file in attachments:
+        if not file.filename:
+            continue
+        content = await file.read()
+        if len(content) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Attachment exceeds 20MB")
+        safe_name = Path(file.filename).name
+        ext = Path(safe_name).suffix[:20]
+        disk_name = f"{uuid.uuid4().hex}{ext}"
+        rel_path = f"group_{message.id}/{disk_name}"
+        dest_dir = upload_root / f"group_{message.id}"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / disk_name
+        dest.write_bytes(content)
+        db.add(
+            ChatGroupAttachment(
+                group_message_id=message.id,
+                uploaded_by=current.id,
+                filename=safe_name[:300],
+                file_path=rel_path,
+                file_size_bytes=len(content),
+                mime_type=(file.content_type or "application/octet-stream")[:100],
+            )
+        )
+    group.updated_at = datetime.now(timezone.utc)
+    db.add(group)
+    db.commit()
+    db.refresh(message)
+    return ChatGroupMessageCreateResponse(message=_group_message_to_response(db, message, current.id))
+
+
+@router.patch("/groups/messages/{message_id}", response_model=ChatGroupMessageResponse)
+def edit_group_message(
+    message_id: UUID,
+    payload: ChatGroupMessageCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    message = db.get(ChatGroupMessage, message_id)
+    if not message:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    _group_or_404(db, message.group_id, current.id)
+    if message.sender_id != current.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only sender can edit message")
+    if message.deleted_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot edit deleted message")
+    message.body = (payload.body or "").strip() or None
+    message.edited_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(message)
+    return _group_message_to_response(db, message, current.id)
+
+
+@router.delete("/groups/messages/{message_id}", response_model=ChatGroupMessageResponse)
+def delete_group_message(
+    message_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    message = db.get(ChatGroupMessage, message_id)
+    if not message:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    _group_or_404(db, message.group_id, current.id)
+    if message.sender_id != current.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only sender can delete message")
+    message.body = None
+    message.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(message)
+    return _group_message_to_response(db, message, current.id)
+
+
+@router.post("/groups/messages/{message_id}/reactions", response_model=list[ChatReactionResponse])
+def toggle_group_reaction(
+    message_id: UUID,
+    payload: ChatReactionToggle,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    message = db.get(ChatGroupMessage, message_id)
+    if not message:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    _group_or_404(db, message.group_id, current.id)
+    emoji = payload.emoji.strip()
+    existing = db.execute(
+        select(ChatGroupReaction).where(
+            ChatGroupReaction.group_message_id == message.id,
+            ChatGroupReaction.user_id == current.id,
+            ChatGroupReaction.emoji == emoji,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        db.delete(existing)
+    else:
+        db.add(ChatGroupReaction(group_message_id=message.id, user_id=current.id, emoji=emoji))
+    db.commit()
+    all_reactions = db.execute(
+        select(ChatGroupReaction).where(ChatGroupReaction.group_message_id == message.id)
+    ).scalars().all()
+    user_map = _user_name_map(db, list({r.user_id for r in all_reactions}))
+    grouped: dict[str, list[ChatGroupReaction]] = {}
+    for row in all_reactions:
+        grouped.setdefault(row.emoji, []).append(row)
+    out: list[ChatReactionResponse] = []
+    for row_emoji, rows in grouped.items():
+        out.append(
+            ChatReactionResponse(
+                emoji=row_emoji,
+                count=len(rows),
+                reacted_by_me=any(r.user_id == current.id for r in rows),
+                reacted_by_names=[user_map.get(r.user_id, "Unknown") for r in rows],
+            )
+        )
+    out.sort(key=lambda x: x.emoji)
+    return out
+
+
+@router.post("/groups/messages/{message_id}/forward", response_model=ChatGroupMessageCreateResponse)
+def forward_group_message(
+    message_id: UUID,
+    payload: ChatGroupForwardPayload,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    source = db.get(ChatGroupMessage, message_id)
+    if not source:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source message not found")
+    _group_or_404(db, source.group_id, current.id)
+    target_group = _group_or_404(db, payload.target_group_id, current.id)
+    cloned = ChatGroupMessage(
+        group_id=target_group.id,
+        sender_id=current.id,
+        body=source.body,
+        forwarded_from_message_id=source.id,
+    )
+    db.add(cloned)
+    db.flush()
+    source_attachments = db.execute(
+        select(ChatGroupAttachment)
+        .where(ChatGroupAttachment.group_message_id == source.id)
+        .order_by(ChatGroupAttachment.created_at.asc())
+    ).scalars().all()
+    for att in source_attachments:
+        db.add(
+            ChatGroupAttachment(
+                group_message_id=cloned.id,
+                uploaded_by=current.id,
+                filename=att.filename,
+                file_path=att.file_path,
+                file_size_bytes=att.file_size_bytes,
+                mime_type=att.mime_type,
+            )
+        )
+    target_group.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(cloned)
+    return ChatGroupMessageCreateResponse(message=_group_message_to_response(db, cloned, current.id))
+
+
+@router.get("/groups/attachments/{attachment_id}/download")
+def download_group_attachment(
+    attachment_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_lead_or_member),
+):
+    att = db.get(ChatGroupAttachment, attachment_id)
+    if not att:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    msg = db.get(ChatGroupMessage, att.group_message_id)
+    if not msg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    _group_or_404(db, msg.group_id, current.id)
+    base = Path(settings.chat_upload_dir).resolve()
+    file_path = (base / att.file_path).resolve()
+    if not str(file_path).startswith(str(base)) or not file_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File missing")
+    return FileResponse(path=file_path, filename=att.filename, media_type=att.mime_type)
 
 
 @router.get("/conversations", response_model=list[ChatConversationResponse])

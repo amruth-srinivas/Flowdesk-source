@@ -6,6 +6,7 @@ import { FloatLabel } from 'primereact/floatlabel';
 import { InputText } from 'primereact/inputtext';
 import { InputTextarea } from 'primereact/inputtextarea';
 import { useEffect, useMemo, useState } from 'react';
+import { isTicketDraftValid, ticketDraftValidationMessage } from './ticketDraftValidation';
 import type {
   CustomerRecord,
   ProjectRecord,
@@ -124,9 +125,19 @@ export function TicketCreateForm({
   );
   const assigneeById = useMemo(() => new Map(assignableUsers.map((u) => [u.id, u])), [assignableUsers]);
 
-  const customerOptions = useMemo(
-    () => [{ label: 'None', value: null }, ...customers.map((c) => ({ label: c.name, value: c.id }))],
-    [customers],
+  const customerOptions = useMemo(() => customers.map((c) => ({ label: c.name, value: c.id })), [customers]);
+
+  const draftValid = useMemo(
+    () =>
+      isTicketDraftValid({
+        projectId,
+        title,
+        description,
+        assigneeIds,
+        customerId,
+        dueDate,
+      }),
+    [projectId, title, description, assigneeIds, customerId, dueDate],
   );
 
   const nextRefPreview = useMemo(() => {
@@ -150,25 +161,29 @@ export function TicketCreateForm({
   }, [initialProjectId, projects]);
 
   async function handleSubmit() {
-    if (!projectId) {
-      setFormError('Select a project.');
-      return;
-    }
-    if (!title.trim()) {
-      setFormError('Enter a title.');
+    const err = ticketDraftValidationMessage({
+      projectId,
+      title,
+      description,
+      assigneeIds,
+      customerId,
+      dueDate,
+    });
+    if (err) {
+      setFormError(err);
       return;
     }
     setFormError('');
     try {
       await onSubmit({
         title: title.trim(),
-        description: description.trim() || null,
+        description: description.trim(),
         type: ticketType,
         priority,
-        project_id: projectId,
+        project_id: projectId!,
         assigned_to: assigneeIds,
-        customer_id: customerId,
-        due_date: dueDate ? toYmd(dueDate) : null,
+        customer_id: customerId!,
+        due_date: toYmd(dueDate!),
       });
     } catch (e) {
       setFormError(e instanceof Error ? e.message : 'Could not create ticket');
@@ -188,7 +203,7 @@ export function TicketCreateForm({
 
         <div className="ticket-form-field ticket-form-field--full">
           <label className="ticket-form-label" htmlFor={`tf-project-${viewKey}`}>
-            Project
+            Project <span className="ticket-form-label-required" aria-hidden>*</span>
           </label>
           <div className="p-inputgroup">
             <span className="p-inputgroup-addon">
@@ -215,13 +230,15 @@ export function TicketCreateForm({
               onChange={(e) => setTitle(e.target.value)}
               maxLength={300}
             />
-            <label htmlFor={`tf-title-${viewKey}`}>Title</label>
+            <label htmlFor={`tf-title-${viewKey}`}>
+              Title <span className="ticket-form-label-required" aria-hidden>*</span>
+            </label>
           </FloatLabel>
         </div>
 
         <div className="ticket-form-field ticket-form-field--full">
           <label className="ticket-form-label" htmlFor={`tf-desc-${viewKey}`}>
-            Description
+            Description <span className="ticket-form-label-required" aria-hidden>*</span>
           </label>
           <InputTextarea
             id={`tf-desc-${viewKey}`}
@@ -260,7 +277,9 @@ export function TicketCreateForm({
 
         <div className="ticket-form-row">
           <div className="ticket-form-field">
-            <label className="ticket-form-label">Assignees</label>
+            <label className="ticket-form-label">
+              Assignees <span className="ticket-form-label-required" aria-hidden>*</span>
+            </label>
             <div className="p-inputgroup">
               <span className="p-inputgroup-addon">
                 <i className="pi pi-users" />
@@ -308,7 +327,9 @@ export function TicketCreateForm({
             </div>
           </div>
           <div className="ticket-form-field">
-            <label className="ticket-form-label">Customer</label>
+            <label className="ticket-form-label">
+              Customer <span className="ticket-form-label-required" aria-hidden>*</span>
+            </label>
             <div className="p-inputgroup">
               <span className="p-inputgroup-addon">
                 <i className="pi pi-building" />
@@ -316,16 +337,19 @@ export function TicketCreateForm({
               <Dropdown
                 value={customerId}
                 options={customerOptions}
-                onChange={(e) => setCustomerId(e.value as string | null)}
+                onChange={(e) => setCustomerId((e.value as string | null) ?? null)}
                 className="full-width"
                 filter
+                placeholder="Select customer"
               />
             </div>
           </div>
         </div>
 
         <div className="ticket-form-field ticket-form-field--full">
-          <label className="ticket-form-label">Due date</label>
+          <label className="ticket-form-label">
+            Due date <span className="ticket-form-label-required" aria-hidden>*</span>
+          </label>
           <Calendar value={dueDate} onChange={(e) => setDueDate((e.value as Date) || null)} showIcon className="full-width ticket-due-cal" />
         </div>
 
@@ -338,7 +362,7 @@ export function TicketCreateForm({
             label={saving ? 'Saving…' : submitLabel}
             icon="pi pi-check"
             onClick={() => void handleSubmit()}
-            disabled={saving}
+            disabled={saving || !draftValid}
           />
         </div>
       </div>

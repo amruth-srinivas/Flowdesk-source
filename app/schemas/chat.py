@@ -127,3 +127,63 @@ class ChatReactionToggle(BaseModel):
 
 class ChatForwardPayload(BaseModel):
     target_conversation_id: UUID
+
+
+class ChatActivityNotificationResponse(BaseModel):
+    id: str
+    activity_type: str
+    conversation_id: UUID
+    message_id: UUID | None = None
+    actor_id: UUID | None = None
+    actor_name: str | None = None
+    actor_avatar_url: str | None = None
+    conversation_user_name: str | None = None
+    body_preview: str | None = None
+    emoji: str | None = None
+    created_at: datetime
+
+
+class ChatGroupCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=200)
+    member_ids: list[UUID] = Field(default_factory=list)
+
+
+class ChatGroupResponse(BaseModel):
+    id: UUID
+    name: str
+    created_by: UUID
+    member_ids: list[UUID]
+    member_names: list[str]
+    member_avatars: list[str | None]
+    last_message_at: datetime | None = None
+    unread_count: int = 0
+
+
+class ChatGroupMessageCreate(BaseModel):
+    body: str | None = Field(default=None, max_length=4000)
+
+
+class ChatGroupMessageResponse(BaseModel):
+    id: UUID
+    group_id: UUID
+    sender_id: UUID
+    sender_name: str
+    sender_avatar_url: str | None = None
+    body: str | None = None
+    reply_to: ChatMessagePreview | None = None
+    forwarded_from: ChatMessagePreview | None = None
+    attachments: list[ChatAttachmentResponse] = []
+    reactions: list[ChatReactionResponse] = []
+    is_read_by_other: bool = False
+    created_at: datetime
+    updated_at: datetime
+    edited_at: datetime | None = None
+    deleted_at: datetime | None = None
+
+
+class ChatGroupMessageCreateResponse(BaseModel):
+    message: ChatGroupMessageResponse
+
+
+class ChatGroupForwardPayload(BaseModel):
+    target_group_id: UUID

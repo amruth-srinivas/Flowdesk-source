@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.constants.enums import TicketStatus, UserRole
-from app.models import Ticket, TicketCycle, TicketCycleResolution, TicketHistory
+from app.models import Resolution, Ticket, TicketCycle, TicketCycleResolution, TicketHistory
 
 
 def dedupe_assignee_ids(assignee_ids: list[UUID]) -> list[UUID]:
@@ -68,6 +68,10 @@ def update_ticket_status(
             resolution = db.execute(
                 select(TicketCycleResolution).where(TicketCycleResolution.ticket_cycle_id == active_cycle_id)
             ).scalar_one_or_none()
+        if not resolution or not (resolution.summary or "").strip():
+            legacy = db.execute(select(Resolution).where(Resolution.ticket_id == ticket.id)).scalar_one_or_none()
+            if legacy and (legacy.summary or "").strip():
+                resolution = legacy
         if not resolution or not (resolution.summary or "").strip():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ticket must have a resolution before closing")
 

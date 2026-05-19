@@ -26,16 +26,24 @@ import {
   CheckCircle2,
   Check,
   UserPlus,
+  Users,
   X,
 } from 'lucide-react';
 import EmojiPicker, { EmojiStyle, Theme, type EmojiClickData } from 'emoji-picker-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   actOnChatRequestRequest,
   chatAttachmentFileUrl,
   clearChatConversationRequest,
   createChatRequestRequest,
+  createChatGroupRequest,
+  deleteChatGroupMessageRequest,
   getChatRequestsRequest,
+  downloadChatGroupAttachmentUrl,
+  getChatGroupsRequest,
+  getChatGroupMessagesRequest,
+  forwardChatGroupMessageRequest,
   deleteChatConversationRequest,
   deleteChatMessageRequest,
   editChatMessageRequest,
@@ -46,8 +54,12 @@ import {
   markChatConversationReadRequest,
   searchChatUsersRequest,
   sendConversationMessageRequest,
+  sendChatGroupMessageRequest,
+  toggleChatGroupReactionRequest,
   toggleChatReactionRequest,
+  updateChatGroupMessageRequest,
   type ChatConversationRecord,
+  type ChatGroupRecord,
   type ChatMessageRecord,
   type ChatRequestRecord,
   type ChatSearchUserRecord,
@@ -55,6 +67,15 @@ import {
 
 type Props = {
   currentUserId?: string | null;
+  currentUserName?: string | null;
+  currentUserEmployeeId?: string | null;
+  currentUserDesignation?: string | null;
+  currentUserAvatarUrl?: string | null;
+  currentUserEmail?: string | null;
+};
+
+type MentionProfile = ChatSearchUserRecord & {
+  email?: string | null;
 };
 
 const IOS_EMOJI_ASSET_BASE = 'https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64';
@@ -133,7 +154,13 @@ function readComposerText(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) {
     return node.textContent ?? '';
   }
+  if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+    return Array.from(node.childNodes).map(readComposerText).join('');
+  }
   if (!(node instanceof HTMLElement)) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      return Array.from(node.childNodes).map(readComposerText).join('');
+    }
     return '';
   }
   if (node.tagName === 'IMG' && node.dataset.emoji) {
@@ -155,6 +182,58 @@ function placeCaretAtEnd(target: HTMLElement) {
   range.collapse(false);
   selection.removeAllRanges();
   selection.addRange(range);
+}
+
+function setCaretByTextOffset(target: HTMLElement, offset: number) {
+  const selection = window.getSelection();
+  if (!selection) {
+    return;
+  }
+  const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+  let remaining = Math.max(0, offset);
+  let current: Node | null = walker.nextNode();
+  while (current) {
+    const text = current.textContent ?? '';
+    if (remaining <= text.length) {
+      const range = document.createRange();
+      range.setStart(current, remaining);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
+    remaining -= text.length;
+    current = walker.nextNode();
+  }
+  placeCaretAtEnd(target);
+}
+
+function getComposerCaretOffset(target: HTMLElement): number {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !target.contains(selection.anchorNode)) {
+    return readComposerText(target).length;
+  }
+  const range = selection.getRangeAt(0);
+  const prefixRange = document.createRange();
+  prefixRange.selectNodeContents(target);
+  prefixRange.setEnd(range.endContainer, range.endOffset);
+  const fragment = prefixRange.cloneContents();
+  return readComposerText(fragment).length;
+}
+
+function getActiveMentionRange(text: string, caretOffset: number) {
+  const safeOffset = Math.max(0, Math.min(caretOffset, text.length));
+  const beforeCaret = text.slice(0, safeOffset);
+  const match = /(^|\s)@([a-zA-Z0-9._-]*)$/.exec(beforeCaret);
+  if (!match) {
+    return null;
+  }
+  const query = match[2] ?? '';
+  const atIndex = safeOffset - query.length - 1;
+  if (atIndex < 0) {
+    return null;
+  }
+  return { start: atIndex, end: safeOffset, query };
 }
 
 function Avatar({
@@ -179,13 +258,22 @@ function Avatar({
   );
 }
 
-export function ChatWorkspace({ currentUserId }: Props) {
+export function ChatWorkspace({
+  currentUserId,
+  currentUserName,
+  currentUserEmployeeId,
+  currentUserDesignation,
+  currentUserAvatarUrl,
+  currentUserEmail,
+}: Props) {
   type ConversationViewMode = 'chat' | 'files' | 'photos';
   const [chatSearch, setChatSearch] = useState('');
   const [searchedUsers, setSearchedUsers] = useState<ChatSearchUserRecord[]>([]);
   const [approvedChatUserIds, setApprovedChatUserIds] = useState<Set<string>>(new Set());
   const [conversations, setConversations] = useState<ChatConversationRecord[]>([]);
+  const [groups, setGroups] = useState<ChatGroupRecord[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [chatViewClosed, setChatViewClosed] = useState(false);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [composerText, setComposerText] = useState('');
@@ -205,6 +293,10 @@ export function ChatWorkspace({ currentUserId }: Props) {
   const [forwardQuery, setForwardQuery] = useState('');
   const [forwardSelectedIds, setForwardSelectedIds] = useState<string[]>([]);
   const [forwardBusy, setForwardBusy] = useState(false);
+  const [groupCreateOpen, setGroupCreateOpen] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [groupSelectedMemberIds, setGroupSelectedMemberIds] = useState<string[]>([]);
+  const [groupCreateBusy, setGroupCreateBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerInputRef = useRef<HTMLDivElement | null>(null);
   const pollInFlightRef = useRef(false);
@@ -212,6 +304,7 @@ export function ChatWorkspace({ currentUserId }: Props) {
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
   const emojiTriggerRef = useRef<HTMLButtonElement | null>(null);
   const emojiPickerRef = useRef<HTMLDivElement | null>(null);
+  const mentionPickerRef = useRef<HTMLDivElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const voiceChunksRef = useRef<BlobPart[]>([]);
@@ -219,12 +312,19 @@ export function ChatWorkspace({ currentUserId }: Props) {
   const discardVoiceRecordingRef = useRef(false);
   const micPointerDownRef = useRef(false);
   const voiceConversationIdRef = useRef<string | null>(null);
+  const voiceIsGroupRef = useRef(false);
   const voiceReplyToIdRef = useRef<string | null>(null);
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceRecordSeconds, setVoiceRecordSeconds] = useState(0);
   const [chatRequests, setChatRequests] = useState<ChatRequestRecord[]>([]);
   const [chatRequestsPanelOpen, setChatRequestsPanelOpen] = useState(false);
   const [chatRequestBusyId, setChatRequestBusyId] = useState<string | null>(null);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionRange, setMentionRange] = useState<{ start: number; end: number } | null>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<ChatSearchUserRecord[]>([]);
+  const [hoveredMentionUser, setHoveredMentionUser] = useState<MentionProfile | null>(null);
+  const [hoveredMentionPos, setHoveredMentionPos] = useState<{ x: number; y: number } | null>(null);
   const [messageAttachmentUrls, setMessageAttachmentUrls] = useState<Record<string, string>>({});
   const [imageViewer, setImageViewer] = useState<{ items: { id: string; name: string }[]; index: number } | null>(null);
   const [imageViewerZoom, setImageViewerZoom] = useState(1);
@@ -232,6 +332,10 @@ export function ChatWorkspace({ currentUserId }: Props) {
   const activeConversation = useMemo(
     () => conversations.find((row) => row.id === activeConversationId) ?? null,
     [conversations, activeConversationId],
+  );
+  const activeGroup = useMemo(
+    () => groups.find((row) => row.id === activeGroupId) ?? null,
+    [groups, activeGroupId],
   );
   const filteredConversations = useMemo(() => {
     const query = chatSearch.trim().toLowerCase();
@@ -249,6 +353,65 @@ export function ChatWorkspace({ currentUserId }: Props) {
     () => new Map(conversations.map((convo) => [convo.other_user_id, convo])),
     [conversations],
   );
+  const mentionBaseUsers = useMemo(() => {
+    const seen = new Set<string>();
+    const directUsers = conversations
+      .map((convo) => ({
+        id: convo.other_user_id,
+        name: convo.other_user_name,
+        employee_id: convo.other_user_employee_id,
+        avatar_url: convo.other_user_avatar_url ?? null,
+        designation: convo.other_user_designation ?? null,
+      }));
+    const groupUsers = activeGroup
+      ? activeGroup.member_names.map((name, index) => ({
+        id: `group-${activeGroup.id}-${index}`,
+        name,
+        employee_id: '',
+        avatar_url: null,
+        designation: null,
+      }))
+      : [];
+    return [...directUsers, ...groupUsers]
+      .filter((user) => {
+        if (user.id === currentUserId || seen.has(user.id)) {
+          return false;
+        }
+        seen.add(user.id);
+        return true;
+      });
+  }, [conversations, currentUserId, activeGroup]);
+  const mentionUserByName = useMemo(() => {
+    const map = new Map<string, MentionProfile>();
+    if (currentUserId && currentUserName?.trim()) {
+      map.set(currentUserName.trim().toLowerCase(), {
+        id: currentUserId,
+        name: currentUserName.trim(),
+        employee_id: currentUserEmployeeId ?? '',
+        avatar_url: currentUserAvatarUrl ?? null,
+        designation: currentUserDesignation ?? null,
+        email: currentUserEmail ?? null,
+      });
+    }
+    [...mentionBaseUsers, ...mentionSuggestions, ...searchedUsers].forEach((user) => {
+      const key = user.name.trim().toLowerCase();
+      if (!key || map.has(key)) {
+        return;
+      }
+      map.set(key, { ...user, email: null });
+    });
+    return map;
+  }, [
+    mentionBaseUsers,
+    mentionSuggestions,
+    searchedUsers,
+    currentUserId,
+    currentUserName,
+    currentUserEmployeeId,
+    currentUserAvatarUrl,
+    currentUserDesignation,
+    currentUserEmail,
+  ]);
   const forwardTargetConversations = useMemo(() => {
     if (!activeConversationId) {
       return conversations;
@@ -265,6 +428,14 @@ export function ChatWorkspace({ currentUserId }: Props) {
         .includes(q),
     );
   }, [conversations, activeConversationId, forwardQuery]);
+  const forwardTargetGroups = useMemo(() => {
+    const others = activeGroupId ? groups.filter((g) => g.id !== activeGroupId) : groups;
+    const q = forwardQuery.trim().toLowerCase();
+    if (!q) {
+      return others;
+    }
+    return others.filter((group) => [group.name, ...group.member_names].join(' ').toLowerCase().includes(q));
+  }, [groups, activeGroupId, forwardQuery]);
   const pendingInboundChatRequests = useMemo(() => {
     if (!currentUserId) {
       return [];
@@ -303,6 +474,10 @@ export function ChatWorkspace({ currentUserId }: Props) {
       || message.attachments.some((att) => att.filename.toLowerCase().includes(query)),
     );
   }, [messages, conversationViewMode, messageSearchQuery]);
+  const activeThreadName = activeGroup?.name ?? activeConversation?.other_user_name ?? 'Select conversation';
+  const activeThreadSubTitle = activeGroup
+    ? `${activeGroup.member_ids.length} members`
+    : (activeConversation?.other_user_designation ?? '');
 
   useEffect(() => {
     return () => {
@@ -331,11 +506,8 @@ export function ChatWorkspace({ currentUserId }: Props) {
         if (cancelled) {
           break;
         }
-        if (messageAttachmentUrls[id]) {
-          continue;
-        }
         try {
-          const response = await fetch(chatAttachmentFileUrl(id), {
+          const response = await fetch(activeGroupId ? downloadChatGroupAttachmentUrl(id) : chatAttachmentFileUrl(id), {
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
           });
           if (!response.ok) {
@@ -358,22 +530,24 @@ export function ChatWorkspace({ currentUserId }: Props) {
     })();
 
     setMessageAttachmentUrls((prev) => {
+      let changed = false;
       const next: Record<string, string> = {};
       for (const [id, url] of Object.entries(prev)) {
         if (attachmentIds.has(id)) {
           next[id] = url;
         } else {
+          changed = true;
           URL.revokeObjectURL(url);
         }
       }
-      return next;
+      return changed ? next : prev;
     });
 
     return () => {
       cancelled = true;
       created.forEach(({ url }) => URL.revokeObjectURL(url));
     };
-  }, [messages, messageAttachmentUrls]);
+  }, [messages, activeGroupId]);
 
   useEffect(() => {
     void refreshAll();
@@ -385,9 +559,12 @@ export function ChatWorkspace({ currentUserId }: Props) {
       void (async () => {
         try {
           await refreshConversations();
+          await refreshGroups();
           await refreshChatRequests();
           if (activeConversationId) {
             await loadMessages(activeConversationId);
+          } else if (activeGroupId) {
+            await loadGroupMessages(activeGroupId);
           }
         } finally {
           pollInFlightRef.current = false;
@@ -395,7 +572,7 @@ export function ChatWorkspace({ currentUserId }: Props) {
       })();
     }, 8000);
     return () => window.clearInterval(timer);
-  }, [activeConversationId]);
+  }, [activeConversationId, activeGroupId]);
 
   useEffect(() => {
     if (!forwardSourceMessageId) {
@@ -425,6 +602,64 @@ export function ChatWorkspace({ currentUserId }: Props) {
     }, 220);
     return () => window.clearTimeout(timer);
   }, [chatSearch]);
+
+  useEffect(() => {
+    if (!mentionOpen) {
+      return;
+    }
+    const onDocMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const picker = mentionPickerRef.current;
+      const composer = composerInputRef.current;
+      if ((picker && picker.contains(target)) || (composer && composer.contains(target))) {
+        return;
+      }
+      setMentionOpen(false);
+      setMentionRange(null);
+      setMentionQuery('');
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMentionOpen(false);
+        setMentionRange(null);
+        setMentionQuery('');
+      }
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [mentionOpen]);
+
+  useEffect(() => {
+    if (!mentionOpen) {
+      return;
+    }
+    const query = mentionQuery.trim().toLowerCase();
+    setMentionSuggestions(mentionBaseUsers.filter((user) =>
+      !query || [user.name, user.employee_id, user.designation ?? ''].join(' ').toLowerCase().includes(query),
+    ));
+    const timer = window.setTimeout(() => {
+      const localMatches = mentionBaseUsers.filter((user) =>
+        !query || [user.name, user.employee_id, user.designation ?? ''].join(' ').toLowerCase().includes(query),
+      );
+      void searchChatUsersRequest(query)
+        .then((rows) => {
+          const dedup = new Map<string, ChatSearchUserRecord>();
+          [...localMatches, ...rows].forEach((user) => {
+            if (user.id === currentUserId || dedup.has(user.id)) {
+              return;
+            }
+            dedup.set(user.id, user);
+          });
+          setMentionSuggestions(Array.from(dedup.values()));
+        })
+        .catch(() => setMentionSuggestions(localMatches));
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [mentionOpen, mentionQuery, mentionBaseUsers, currentUserId]);
 
   async function refreshChatRequests() {
     try {
@@ -494,14 +729,26 @@ export function ChatWorkspace({ currentUserId }: Props) {
 
   async function refreshAll() {
     await refreshConversations();
+    await refreshGroups();
     await refreshChatRequests();
+  }
+
+  async function refreshGroups() {
+    try {
+      const rows = await getChatGroupsRequest();
+      setGroups(rows);
+      return rows;
+    } catch {
+      setGroups([]);
+      return [];
+    }
   }
 
   async function refreshConversations() {
     try {
       const rows = await getChatConversationsRequest();
       setConversations(rows);
-      if (!activeConversationId && rows.length > 0 && !chatViewClosed) {
+      if (!activeConversationId && !activeGroupId && rows.length > 0 && !chatViewClosed) {
         setActiveConversationId(rows[0].id);
         void loadMessages(rows[0].id);
       }
@@ -519,6 +766,15 @@ export function ChatWorkspace({ currentUserId }: Props) {
       await markChatConversationReadRequest(conversationId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load messages');
+    }
+  }
+
+  async function loadGroupMessages(groupId: string) {
+    try {
+      const rows = await getChatGroupMessagesRequest(groupId);
+      setMessages(rows);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load group messages');
     }
   }
 
@@ -540,6 +796,37 @@ export function ChatWorkspace({ currentUserId }: Props) {
     }
   }
 
+  async function handleCreateGroup() {
+    const name = groupName.trim();
+    if (!name) {
+      setError('Enter a group name.');
+      return;
+    }
+    if (groupSelectedMemberIds.length === 0) {
+      setError('Select at least one member for group chat.');
+      return;
+    }
+    setGroupCreateBusy(true);
+    try {
+      const group = await createChatGroupRequest({
+        name,
+        member_ids: groupSelectedMemberIds,
+      });
+      await refreshGroups();
+      setActiveConversationId(null);
+      setActiveGroupId(group.id);
+      setMessages([]);
+      await loadGroupMessages(group.id);
+      setGroupCreateOpen(false);
+      setGroupName('');
+      setGroupSelectedMemberIds([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create group');
+    } finally {
+      setGroupCreateBusy(false);
+    }
+  }
+
   async function handleActOnChatRequest(requestId: string, action: 'approve' | 'reject' | 'cancel') {
     setChatRequestBusyId(requestId);
     try {
@@ -555,18 +842,31 @@ export function ChatWorkspace({ currentUserId }: Props) {
   }
 
   async function handleSendMessage() {
-    if (!activeConversationId || (!composerText.trim() && selectedFiles.length === 0 && !replyingTo)) {
+    if (!activeConversationId && !activeGroupId) {
+      return;
+    }
+    if (!composerText.trim() && selectedFiles.length === 0 && !replyingTo) {
       return;
     }
     setIsSending(true);
     try {
-      const sent = await sendConversationMessageRequest({
-        conversationId: activeConversationId,
-        body: composerText.trim(),
-        replyToMessageId: replyingTo?.id,
-        attachments: selectedFiles,
-      });
-      setMessages((current) => [...current, sent]);
+      if (activeGroupId) {
+        const sentGroup = await sendChatGroupMessageRequest({
+          groupId: activeGroupId,
+          body: composerText.trim(),
+          replyToMessageId: replyingTo?.id,
+          attachments: selectedFiles,
+        });
+        setMessages((current) => [...current, sentGroup]);
+      } else if (activeConversationId) {
+        const sent = await sendConversationMessageRequest({
+          conversationId: activeConversationId,
+          body: composerText.trim(),
+          replyToMessageId: replyingTo?.id,
+          attachments: selectedFiles,
+        });
+        setMessages((current) => [...current, sent]);
+      }
       setComposerText('');
       if (composerInputRef.current) {
         composerInputRef.current.innerHTML = '';
@@ -574,7 +874,11 @@ export function ChatWorkspace({ currentUserId }: Props) {
       setSelectedFiles([]);
       setReplyingTo(null);
       setIsEmojiPickerOpen(false);
+      setMentionOpen(false);
+      setMentionRange(null);
+      setMentionQuery('');
       void refreshConversations();
+      void refreshGroups();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to send message');
     } finally {
@@ -612,6 +916,7 @@ export function ChatWorkspace({ currentUserId }: Props) {
       discardVoiceRecordingRef.current = false;
       voiceChunksRef.current = [];
       voiceConversationIdRef.current = null;
+      voiceIsGroupRef.current = false;
       voiceReplyToIdRef.current = null;
       return;
     }
@@ -624,6 +929,8 @@ export function ChatWorkspace({ currentUserId }: Props) {
     const blob = new Blob(chunks, { type: blobType });
     const conversationId = voiceConversationIdRef.current;
     voiceConversationIdRef.current = null;
+    const isGroupVoice = voiceIsGroupRef.current;
+    voiceIsGroupRef.current = false;
     const replyToMessageId = voiceReplyToIdRef.current;
     voiceReplyToIdRef.current = null;
 
@@ -636,15 +943,23 @@ export function ChatWorkspace({ currentUserId }: Props) {
 
     setIsSending(true);
     try {
-      const sent = await sendConversationMessageRequest({
-        conversationId,
-        body: 'Voice message',
-        replyToMessageId: replyToMessageId ?? undefined,
-        attachments: [file],
-      });
+      const sent = isGroupVoice
+        ? await sendChatGroupMessageRequest({
+          groupId: conversationId,
+          body: 'Voice message',
+          replyToMessageId: replyToMessageId ?? undefined,
+          attachments: [file],
+        })
+        : await sendConversationMessageRequest({
+          conversationId,
+          body: 'Voice message',
+          replyToMessageId: replyToMessageId ?? undefined,
+          attachments: [file],
+        });
       setMessages((current) => [...current, sent]);
       setReplyingTo(null);
       void refreshConversations();
+      void refreshGroups();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to send voice message');
     } finally {
@@ -653,7 +968,8 @@ export function ChatWorkspace({ currentUserId }: Props) {
   }
 
   async function startVoiceRecording() {
-    if (!activeConversationId || isSending || mediaRecorderRef.current) {
+    const activeThreadId = activeGroupId ?? activeConversationId;
+    if (!activeThreadId || isSending || mediaRecorderRef.current) {
       return;
     }
     if (typeof window === 'undefined' || !('MediaRecorder' in window)) {
@@ -668,13 +984,15 @@ export function ChatWorkspace({ currentUserId }: Props) {
     }
 
     discardVoiceRecordingRef.current = false;
-    voiceConversationIdRef.current = activeConversationId;
+    voiceConversationIdRef.current = activeThreadId;
+    voiceIsGroupRef.current = Boolean(activeGroupId);
     voiceReplyToIdRef.current = replyingTo?.id ?? null;
     try {
       const stream = await mediaDevices.getUserMedia({ audio: true });
       if (!micPointerDownRef.current) {
         stream.getTracks().forEach((t) => t.stop());
         voiceConversationIdRef.current = null;
+        voiceIsGroupRef.current = false;
         voiceReplyToIdRef.current = null;
         return;
       }
@@ -696,6 +1014,7 @@ export function ChatWorkspace({ currentUserId }: Props) {
         voiceStreamRef.current = null;
         mediaRecorderRef.current = null;
         voiceConversationIdRef.current = null;
+        voiceIsGroupRef.current = false;
         voiceReplyToIdRef.current = null;
         return;
       }
@@ -708,6 +1027,7 @@ export function ChatWorkspace({ currentUserId }: Props) {
       voiceStreamRef.current = null;
       mediaRecorderRef.current = null;
       voiceConversationIdRef.current = null;
+      voiceIsGroupRef.current = false;
       voiceReplyToIdRef.current = null;
       setVoiceRecording(false);
       setError(err instanceof Error ? err.message : 'Microphone access is required for voice messages.');
@@ -747,9 +1067,12 @@ export function ChatWorkspace({ currentUserId }: Props) {
     }
     setEditingMessageId(message.id);
     try {
-      const updated = await editChatMessageRequest(message.id, nextBody.trim());
+      const updated = activeGroupId
+        ? await updateChatGroupMessageRequest(message.id, nextBody.trim())
+        : await editChatMessageRequest(message.id, nextBody.trim());
       setMessages((current) => current.map((row) => (row.id === updated.id ? updated : row)));
       void refreshConversations();
+      void refreshGroups();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to edit message');
     } finally {
@@ -762,9 +1085,12 @@ export function ChatWorkspace({ currentUserId }: Props) {
       return;
     }
     try {
-      const updated = await deleteChatMessageRequest(messageId);
+      const updated = activeGroupId
+        ? await deleteChatGroupMessageRequest(messageId)
+        : await deleteChatMessageRequest(messageId);
       setMessages((current) => current.map((row) => (row.id === updated.id ? updated : row)));
       void refreshConversations();
+      void refreshGroups();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to delete message');
     }
@@ -772,7 +1098,9 @@ export function ChatWorkspace({ currentUserId }: Props) {
 
   async function handleReact(messageId: string, emoji: string) {
     try {
-      const reactions = await toggleChatReactionRequest(messageId, emoji);
+      const reactions = activeGroupId
+        ? await toggleChatGroupReactionRequest(messageId, emoji)
+        : await toggleChatReactionRequest(messageId, emoji);
       setMessages((current) => current.map((row) => (row.id === messageId ? { ...row, reactions } : row)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to react');
@@ -797,8 +1125,14 @@ export function ChatWorkspace({ currentUserId }: Props) {
     setForwardBusy(true);
     setError('');
     try {
-      const results = await Promise.allSettled(targets.map((cid) => forwardChatMessageRequest(messageId, cid)));
-      const activeId = activeConversationId;
+      const results = await Promise.allSettled(
+        targets.map((targetId) =>
+          activeGroupId
+            ? forwardChatGroupMessageRequest(messageId, targetId)
+            : forwardChatMessageRequest(messageId, targetId),
+        ),
+      );
+      const activeId = activeGroupId ?? activeConversationId;
       const toAppend: ChatMessageRecord[] = [];
       for (const r of results) {
         if (r.status === 'fulfilled' && r.value.conversation_id === activeId) {
@@ -818,6 +1152,7 @@ export function ChatWorkspace({ currentUserId }: Props) {
         );
       }
       void refreshConversations();
+      void refreshGroups();
       setForwardSourceMessageId(null);
       setForwardQuery('');
       setForwardSelectedIds([]);
@@ -877,6 +1212,97 @@ export function ChatWorkspace({ currentUserId }: Props) {
     activeSelection.addRange(range);
 
     setComposerText(readComposerText(composerEl));
+  }
+
+  function updateMentionState(nextText: string) {
+    const composerEl = composerInputRef.current;
+    if (!composerEl) {
+      return;
+    }
+    const caretOffset = getComposerCaretOffset(composerEl);
+    const activeMention = getActiveMentionRange(nextText, caretOffset);
+    if (!activeMention) {
+      setMentionOpen(false);
+      setMentionRange(null);
+      setMentionQuery('');
+      return;
+    }
+    setMentionOpen(true);
+    setMentionRange({ start: activeMention.start, end: activeMention.end });
+    setMentionQuery(activeMention.query);
+  }
+
+  function applyMention(user: ChatSearchUserRecord) {
+    if (!mentionRange || !composerInputRef.current) {
+      return;
+    }
+    const currentText = readComposerText(composerInputRef.current);
+    const mentionToken = `@${user.name}`;
+    const nextText = `${currentText.slice(0, mentionRange.start)}${mentionToken} ${currentText.slice(mentionRange.end)}`;
+    composerInputRef.current.textContent = nextText;
+    setComposerText(nextText);
+    setMentionOpen(false);
+    setMentionRange(null);
+    setMentionQuery('');
+    setMentionSuggestions([]);
+    const nextCaret = mentionRange.start + mentionToken.length + 1;
+    setCaretByTextOffset(composerInputRef.current, nextCaret);
+    composerInputRef.current.focus();
+  }
+
+  function renderMessageBodyWithMentions(value: string) {
+    if (!value) {
+      return null;
+    }
+    const nameAlternatives = Array.from(mentionUserByName.keys())
+      .sort((a, b) => b.length - a.length)
+      .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (nameAlternatives.length === 0) {
+      return renderWithIosEmoji(value);
+    }
+    const mentionRegex = new RegExp(`@(${nameAlternatives.join('|')})(?=\\s|$|[.,!?;:])`, 'gi');
+    const nodes: ReactNode[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null = mentionRegex.exec(value);
+    while (match) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (start > lastIndex) {
+        nodes.push(<Fragment key={`text-${lastIndex}`}>{renderWithIosEmoji(value.slice(lastIndex, start))}</Fragment>);
+      }
+      const mentionName = (match[1] ?? '').trim().toLowerCase();
+      const mentionUser: MentionProfile = mentionUserByName.get(mentionName) ?? {
+        id: `mention-${mentionName}`,
+        name: (match[1] ?? '').trim(),
+        employee_id: '',
+        avatar_url: null,
+        designation: null,
+        email: null,
+      };
+      nodes.push(
+        <span
+          key={`mention-${start}-${end}`}
+          className="chat-message-mention"
+          onMouseEnter={(event) => {
+            const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+            setHoveredMentionUser(mentionUser);
+            setHoveredMentionPos({ x: rect.left, y: rect.top });
+          }}
+          onMouseLeave={() => {
+            setHoveredMentionUser(null);
+            setHoveredMentionPos(null);
+          }}
+        >
+          @{mentionUser.name}
+        </span>,
+      );
+      lastIndex = end;
+      match = mentionRegex.exec(value);
+    }
+    if (lastIndex < value.length) {
+      nodes.push(<Fragment key={`tail-${lastIndex}`}>{renderWithIosEmoji(value.slice(lastIndex))}</Fragment>);
+    }
+    return nodes;
   }
 
   function handleReactionEmojiSelect(emojiData: EmojiClickData, messageId: string) {
@@ -954,6 +1380,7 @@ export function ChatWorkspace({ currentUserId }: Props) {
   function handleCloseChatView() {
     setChatViewClosed(true);
     setActiveConversationId(null);
+    setActiveGroupId(null);
     setMessages([]);
     setMessageSearchOpen(false);
     setMessageSearchQuery('');
@@ -1135,6 +1562,15 @@ export function ChatWorkspace({ currentUserId }: Props) {
       <aside className="chat-left-panel">
         <div className="chat-recent-header">
           <span>Recent Chats</span>
+          <button
+            type="button"
+            className="chat-create-group-btn"
+            onClick={() => setGroupCreateOpen(true)}
+            title="Create group"
+          >
+            <Users size={14} />
+            New group
+          </button>
         </div>
         <div className="chat-conversations">
           {filteredConversations.map((convo) => (
@@ -1144,6 +1580,7 @@ export function ChatWorkspace({ currentUserId }: Props) {
               className={`chat-conversation-item ${activeConversationId === convo.id ? 'active' : ''}`}
               onClick={() => {
                 setChatViewClosed(false);
+                setActiveGroupId(null);
                 setActiveConversationId(convo.id);
                 void loadMessages(convo.id);
               }}
@@ -1174,20 +1611,53 @@ export function ChatWorkspace({ currentUserId }: Props) {
               </div>
             </button>
           ))}
-          {filteredConversations.length === 0 ? <p className="chat-muted">No chats found.</p> : null}
+          {groups.length > 0 ? <div className="chat-group-divider">Groups</div> : null}
+          {groups.map((group) => (
+            <button
+              key={group.id}
+              type="button"
+              className={`chat-conversation-item ${activeGroupId === group.id ? 'active' : ''}`}
+              onClick={() => {
+                setChatViewClosed(false);
+                setActiveConversationId(null);
+                setActiveGroupId(group.id);
+                void loadGroupMessages(group.id);
+              }}
+            >
+              <div className="chat-recent-row-main">
+                <span className="chat-group-avatar"><Users size={15} /></span>
+                <div className="chat-recent-text">
+                  <p>{group.name}</p>
+                  <small title={group.member_names.join(', ')}>{group.member_ids.length} members</small>
+                </div>
+              </div>
+              <div className="chat-recent-meta">
+                <small>
+                  {group.last_message_at
+                    ? new Date(group.last_message_at).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })
+                    : ''}
+                </small>
+              </div>
+            </button>
+          ))}
+          {filteredConversations.length === 0 && groups.length === 0 ? <p className="chat-muted">No chats found.</p> : null}
         </div>
       </aside>
 
       <section className="chat-main-panel">
-        {activeConversationId ? (
+        {activeConversationId || activeGroupId ? (
           <>
         <header className="chat-main-header">
           <div className="chat-main-header-left">
             <div className="chat-main-user">
-              <Avatar name={activeConversation?.other_user_name ?? 'Contact'} avatarUrl={activeConversation?.other_user_avatar_url ?? null} />
+              {activeGroup ? (
+                <span className="chat-group-avatar chat-group-avatar--header"><Users size={16} /></span>
+              ) : (
+                <Avatar name={activeConversation?.other_user_name ?? 'Contact'} avatarUrl={activeConversation?.other_user_avatar_url ?? null} />
+              )}
               <div>
-                <h3>{activeConversation?.other_user_name ?? 'Select conversation'}</h3>
-                <span>{activeConversation?.other_user_designation ?? ''}</span>
+                <h3>{activeThreadName}</h3>
+                <span>{activeThreadSubTitle}</span>
               </div>
             </div>
             <nav className="chat-main-tabs" aria-label="Conversation sections">
@@ -1206,9 +1676,11 @@ export function ChatWorkspace({ currentUserId }: Props) {
               />
             ) : null}
             <button type="button" title="Find in chat" onClick={() => setMessageSearchOpen((current) => !current)}><Search size={15} /></button>
-            <button type="button" title="More" onClick={() => setHeaderMenuOpen((current) => !current)}>
-              <MoreHorizontal size={15} />
-            </button>
+            {!activeGroup ? (
+              <button type="button" title="More" onClick={() => setHeaderMenuOpen((current) => !current)}>
+                <MoreHorizontal size={15} />
+              </button>
+            ) : null}
             {headerMenuOpen ? (
               <div className="chat-header-more-menu">
                 <button type="button" onClick={() => void toggleConversationPin()}>
@@ -1270,10 +1742,9 @@ export function ChatWorkspace({ currentUserId }: Props) {
                   {!mine && !isDeletedMessage ? (
                     <div className="chat-message-meta-row">
                       <span className="chat-message-meta-name">{message.sender_name}</span>
-                      <span className="chat-message-meta-time">{formatMessageTime(message.created_at)}</span>
                     </div>
                   ) : null}
-                  <div className={`chat-message-bubble-row ${mine ? 'chat-message-bubble-row--mine' : ''}`}>
+                  <div className={`chat-message-bubble-row ${mine ? 'chat-message-bubble-row--mine' : 'chat-message-bubble-row--theirs'}`}>
                   {mine && !isDeletedMessage ? (
                     <span className="chat-message-meta-time chat-message-meta-time--inline">{formatMessageTime(message.created_at)}</span>
                   ) : null}
@@ -1293,7 +1764,7 @@ export function ChatWorkspace({ currentUserId }: Props) {
                   {isDeletedMessage ? (
                     <p className="chat-message-body chat-message-body--deleted">This message has been deleted</p>
                   ) : message.body ? (
-                    <p className="chat-message-body">{renderWithIosEmoji(message.body)}</p>
+                    <p className="chat-message-body">{renderMessageBodyWithMentions(message.body)}</p>
                   ) : null}
                   {!isDeletedMessage && imageAttachments.length > 0 ? (
                     <div className="chat-attachments chat-attachments--images">
@@ -1457,6 +1928,9 @@ export function ChatWorkspace({ currentUserId }: Props) {
                   </div>
                   )}
                   </article>
+                  {!mine && !isDeletedMessage ? (
+                    <span className="chat-message-meta-time">{formatMessageTime(message.created_at)}</span>
+                  ) : null}
                   </div>
                   {!isDeletedMessage && message.reactions.length > 0 ? (
                     <div className="chat-reactions chat-reactions--below">
@@ -1524,10 +1998,34 @@ export function ChatWorkspace({ currentUserId }: Props) {
                   data-placeholder="Type a message"
                   onInput={() => {
                     if (composerInputRef.current) {
-                      setComposerText(readComposerText(composerInputRef.current));
+                      const nextText = readComposerText(composerInputRef.current);
+                      setComposerText(nextText);
+                      updateMentionState(nextText);
                     }
                   }}
                 />
+                {mentionOpen ? (
+                  <div className="chat-mention-picker" ref={mentionPickerRef}>
+                    {mentionSuggestions.length === 0 ? (
+                      <div className="chat-mention-empty">No users found.</div>
+                    ) : (
+                      mentionSuggestions.map((user) => (
+                        <button
+                          key={user.id}
+                          type="button"
+                          className="chat-mention-item"
+                          onClick={() => applyMention(user)}
+                        >
+                          <Avatar name={user.name} avatarUrl={user.avatar_url} />
+                          <span className="chat-mention-item-text">
+                            <strong>{user.name}</strong>
+                            <small>{user.employee_id}</small>
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
               </div>
               <div className="chat-composer-toolbar">
                 <div className="chat-composer-actions" aria-label="Composer tools">
@@ -1550,9 +2048,9 @@ export function ChatWorkspace({ currentUserId }: Props) {
                     className={`chat-composer-voice${voiceRecording ? ' chat-composer-voice--recording' : ''}`}
                     title="Hold to record voice message"
                     aria-label="Hold to record a voice message. Release to send."
-                    disabled={isSending || !activeConversationId}
+                    disabled={isSending || (!activeConversationId && !activeGroupId)}
                     onPointerDown={(event) => {
-                      if (event.button !== 0 || isSending || !activeConversationId) {
+                      if (event.button !== 0 || isSending || (!activeConversationId && !activeGroupId)) {
                         return;
                       }
                       micPointerDownRef.current = true;
@@ -1689,30 +2187,40 @@ export function ChatWorkspace({ currentUserId }: Props) {
               />
             </div>
             <div className="chat-forward-modal-list">
-              {forwardTargetConversations.length === 0 ? (
+              {(activeGroupId ? forwardTargetGroups.length === 0 : forwardTargetConversations.length === 0) ? (
                 <p className="chat-forward-modal-empty">
-                  {conversations.length <= 1
-                    ? 'You need another open chat to forward to. Start a conversation from the search box on the left.'
-                    : 'No chats match your search.'}
+                  {activeGroupId
+                    ? groups.length <= 1
+                      ? 'You need another group to forward to.'
+                      : 'No groups match your search.'
+                    : conversations.length <= 1
+                      ? 'You need another open chat to forward to. Start a conversation from the search box on the left.'
+                      : 'No chats match your search.'}
                 </p>
               ) : (
-                forwardTargetConversations.map((convo) => {
-                  const selected = forwardSelectedIds.includes(convo.id);
+                (activeGroupId ? forwardTargetGroups : forwardTargetConversations).map((target) => {
+                  const targetId = target.id;
+                  const selected = forwardSelectedIds.includes(targetId);
                   return (
                     <button
-                      key={convo.id}
+                      key={targetId}
                       type="button"
                       className={`chat-forward-modal-row${selected ? ' chat-forward-modal-row--selected' : ''}`}
                       disabled={forwardBusy}
                       aria-pressed={selected}
-                      onClick={() => toggleForwardTarget(convo.id)}
+                      onClick={() => toggleForwardTarget(targetId)}
                     >
-                      <Avatar name={convo.other_user_name} avatarUrl={convo.other_user_avatar_url} />
+                      {'other_user_name' in target ? (
+                        <Avatar name={target.other_user_name} avatarUrl={target.other_user_avatar_url} />
+                      ) : (
+                        <span className="chat-group-avatar"><Users size={15} /></span>
+                      )}
                       <div className="chat-forward-modal-row-text">
-                        <span className="chat-forward-modal-row-name">{convo.other_user_name}</span>
+                        <span className="chat-forward-modal-row-name">{'other_user_name' in target ? target.other_user_name : target.name}</span>
                         <span className="chat-forward-modal-row-meta">
-                          {convo.other_user_employee_id}
-                          {convo.other_user_designation ? ` · ${convo.other_user_designation}` : ''}
+                          {'other_user_name' in target
+                            ? `${target.other_user_employee_id}${target.other_user_designation ? ` · ${target.other_user_designation}` : ''}`
+                            : `${target.member_ids.length} members`}
                         </span>
                       </div>
                       <span className={`chat-forward-modal-check${selected ? ' chat-forward-modal-check--on' : ''}`} aria-hidden>
@@ -1736,6 +2244,89 @@ export function ChatWorkspace({ currentUserId }: Props) {
                 {forwardBusy ? 'Sending…' : 'Send'}
               </button>
             </footer>
+          </div>
+        </div>
+      ) : null}
+
+      {groupCreateOpen ? (
+        <div
+          className="chat-forward-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !groupCreateBusy) {
+              setGroupCreateOpen(false);
+            }
+          }}
+        >
+          <div className="chat-forward-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="chat-forward-modal-head">
+              <div>
+                <h2>Create group chat</h2>
+                <p className="chat-forward-modal-sub">Select members and start messaging.</p>
+              </div>
+              <button type="button" className="chat-forward-modal-close" onClick={() => !groupCreateBusy && setGroupCreateOpen(false)}>
+                <X size={16} />
+              </button>
+            </header>
+            <div className="chat-forward-modal-search">
+              <input
+                value={groupName}
+                onChange={(event) => setGroupName(event.target.value)}
+                placeholder="Group name"
+                maxLength={200}
+              />
+            </div>
+            <div className="chat-forward-modal-list">
+              {mentionBaseUsers.map((user) => (
+                <label key={user.id} className="chat-forward-modal-row">
+                  <input
+                    className="chat-group-create-check"
+                    type="checkbox"
+                    checked={groupSelectedMemberIds.includes(user.id)}
+                    onChange={() =>
+                      setGroupSelectedMemberIds((current) =>
+                        current.includes(user.id) ? current.filter((id) => id !== user.id) : [...current, user.id],
+                      )
+                    }
+                  />
+                  <Avatar name={user.name} avatarUrl={user.avatar_url} />
+                  <div className="chat-forward-modal-row-text">
+                    <span className="chat-forward-modal-row-name">{user.name}</span>
+                    <span className="chat-forward-modal-row-meta">{user.designation ?? user.employee_id ?? 'Team member'}</span>
+                  </div>
+                </label>
+              ))}
+              {mentionBaseUsers.length === 0 ? <p className="chat-forward-modal-empty">No members available.</p> : null}
+            </div>
+            <footer className="chat-forward-modal-footer">
+              <span className="chat-forward-modal-footer-hint">{groupSelectedMemberIds.length} selected</span>
+              <button type="button" className="chat-forward-modal-send" disabled={groupCreateBusy} onClick={() => void handleCreateGroup()}>
+                {groupCreateBusy ? 'Creating…' : 'Create group'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+
+      {hoveredMentionUser && hoveredMentionPos ? (
+        <div
+          className="chat-mention-hover-card"
+          style={{
+            left: Math.max(10, Math.min(window.innerWidth - 300, hoveredMentionPos.x)),
+            top: Math.max(10, hoveredMentionPos.y - 170),
+          }}
+        >
+          <div className="chat-mention-hover-head">
+            <Avatar name={hoveredMentionUser.name} avatarUrl={hoveredMentionUser.avatar_url} />
+            <div>
+              <strong>{hoveredMentionUser.name}</strong>
+              <span>{hoveredMentionUser.designation || 'Team member'}</span>
+            </div>
+          </div>
+          <div className="chat-mention-hover-meta">
+            <div><b>Employee ID:</b> {hoveredMentionUser.employee_id || 'Not available'}</div>
+            <div><b>Designation:</b> {hoveredMentionUser.designation || 'Not available'}</div>
+            <div><b>Email:</b> {hoveredMentionUser.email || 'Not available'}</div>
           </div>
         </div>
       ) : null}

@@ -856,13 +856,13 @@ export type TicketCycleRecord = {
 
 export type TicketCreatePayload = {
   title: string;
-  description?: string | null;
+  description: string;
   type: TicketType;
   priority: TicketPriority;
   project_id: string;
-  assigned_to?: string[];
-  customer_id?: string | null;
-  due_date?: string | null;
+  assigned_to: string[];
+  customer_id: string;
+  due_date: string;
   sprint_id?: string | null;
 };
 
@@ -1059,7 +1059,7 @@ export async function getTicketResolutionRequest(ticketId: string, cycleId?: str
   const response = await fetch(`${API_BASE_URL}/tickets/${ticketId}/resolution${params.size ? `?${params}` : ''}`, {
     headers: getAuthHeaders(),
   });
-  if (response.status === 404) {
+  if (response.status === 404 || response.status === 204) {
     return null;
   }
   return parseResponse<ResolutionRecord>(response);
@@ -1370,6 +1370,7 @@ export type SprintTicketBrief = {
   title: string;
   status: string;
   priority: string;
+  assignee_ids: string[];
   assignee_names: string[];
   carried_from_sprint_id: string | null;
   carried_from_sprint_title: string | null;
@@ -1516,11 +1517,36 @@ export type ChatConversationRecord = {
   is_muted: boolean;
 };
 
+export type ChatGroupRecord = {
+  id: string;
+  name: string;
+  created_by: string;
+  member_ids: string[];
+  member_names: string[];
+  member_avatars: Array<string | null>;
+  last_message_at: string | null;
+  unread_count: number;
+};
+
 export type ChatNotificationCountRecord = {
   unread_messages_count: number;
   reaction_updates_count: number;
   total_count: number;
   server_now: string;
+};
+
+export type ChatActivityNotificationRecord = {
+  id: string;
+  activity_type: 'new_message' | 'reaction' | 'mention' | string;
+  conversation_id: string;
+  message_id: string | null;
+  actor_id: string | null;
+  actor_name: string | null;
+  actor_avatar_url: string | null;
+  conversation_user_name: string | null;
+  body_preview: string | null;
+  emoji: string | null;
+  created_at: string;
 };
 
 export async function searchChatUsersRequest(query: string): Promise<ChatSearchUserRecord[]> {
@@ -1566,6 +1592,95 @@ export async function getChatConversationsRequest(): Promise<ChatConversationRec
   }));
 }
 
+export async function getChatGroupsRequest(): Promise<ChatGroupRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/chat/groups`, { headers: getAuthHeaders() });
+  return parseResponse<ChatGroupRecord[]>(response);
+}
+
+export async function createChatGroupRequest(payload: { name: string; member_ids: string[] }): Promise<ChatGroupRecord> {
+  const response = await fetch(`${API_BASE_URL}/chat/groups`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<ChatGroupRecord>(response);
+}
+
+export async function getChatGroupMessagesRequest(groupId: string): Promise<ChatMessageRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/chat/groups/${groupId}/messages`, { headers: getAuthHeaders() });
+  const rows = await parseResponse<Array<ChatMessageRecord & { group_id?: string }>>(response);
+  return rows.map((row) => ({ ...row, conversation_id: row.conversation_id ?? row.group_id ?? groupId }));
+}
+
+export async function sendChatGroupMessageRequest(payload: {
+  groupId: string;
+  body?: string;
+  replyToMessageId?: string | null;
+  forwardedFromMessageId?: string | null;
+  attachments?: File[];
+}): Promise<ChatMessageRecord> {
+  const formData = new FormData();
+  if (payload.body?.trim()) {
+    formData.append('body', payload.body.trim());
+  }
+  if (payload.replyToMessageId) {
+    formData.append('reply_to_message_id', payload.replyToMessageId);
+  }
+  if (payload.forwardedFromMessageId) {
+    formData.append('forwarded_from_message_id', payload.forwardedFromMessageId);
+  }
+  (payload.attachments ?? []).forEach((file) => formData.append('attachments', file));
+  const response = await fetch(`${API_BASE_URL}/chat/groups/${payload.groupId}/messages`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: formData,
+  });
+  const row = await parseResponse<{ message: ChatMessageRecord & { group_id?: string } }>(response);
+  return { ...row.message, conversation_id: row.message.conversation_id ?? row.message.group_id ?? payload.groupId };
+}
+
+export async function updateChatGroupMessageRequest(messageId: string, body: string): Promise<ChatMessageRecord> {
+  const response = await fetch(`${API_BASE_URL}/chat/groups/messages/${messageId}`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ body }),
+  });
+  const row = await parseResponse<ChatMessageRecord & { group_id?: string }>(response);
+  return { ...row, conversation_id: row.conversation_id ?? row.group_id ?? '' };
+}
+
+export async function deleteChatGroupMessageRequest(messageId: string): Promise<ChatMessageRecord> {
+  const response = await fetch(`${API_BASE_URL}/chat/groups/messages/${messageId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  const row = await parseResponse<ChatMessageRecord & { group_id?: string }>(response);
+  return { ...row, conversation_id: row.conversation_id ?? row.group_id ?? '' };
+}
+
+export async function toggleChatGroupReactionRequest(messageId: string, emoji: string): Promise<ChatReactionRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/chat/groups/messages/${messageId}/reactions`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ emoji }),
+  });
+  return parseResponse<ChatReactionRecord[]>(response);
+}
+
+export async function forwardChatGroupMessageRequest(messageId: string, targetGroupId: string): Promise<ChatMessageRecord> {
+  const response = await fetch(`${API_BASE_URL}/chat/groups/messages/${messageId}/forward`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ target_group_id: targetGroupId }),
+  });
+  const row = await parseResponse<{ message: ChatMessageRecord & { group_id?: string } }>(response);
+  return { ...row.message, conversation_id: row.message.conversation_id ?? row.message.group_id ?? targetGroupId };
+}
+
+export function downloadChatGroupAttachmentUrl(attachmentId: string): string {
+  return `${API_BASE_URL}/chat/groups/attachments/${attachmentId}/download`;
+}
+
 export async function patchChatConversationPreferencesRequest(
   conversationId: string,
   body: { is_pinned?: boolean; is_muted?: boolean },
@@ -1582,6 +1697,12 @@ export async function getChatNotificationCountRequest(since?: string): Promise<C
   const query = since ? `?${new URLSearchParams({ since })}` : '';
   const response = await fetch(`${API_BASE_URL}/chat/notifications/count${query}`, { headers: getAuthHeaders() });
   return parseResponse<ChatNotificationCountRecord>(response);
+}
+
+export async function getChatNotificationActivityRequest(since?: string): Promise<ChatActivityNotificationRecord[]> {
+  const query = since ? `?${new URLSearchParams({ since })}` : '';
+  const response = await fetch(`${API_BASE_URL}/chat/notifications/activity${query}`, { headers: getAuthHeaders() });
+  return parseResponse<ChatActivityNotificationRecord[]>(response);
 }
 
 export async function getConversationMessagesRequest(conversationId: string): Promise<ChatMessageRecord[]> {
